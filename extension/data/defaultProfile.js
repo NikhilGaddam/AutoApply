@@ -10,26 +10,40 @@
 
     email: "ngaddam.dev@gmail.com",
     phone: "+1 571-635-2506",
+    phoneLocal: "571-635-2506",
     phoneCountryCode: "+1",
+    phoneType: "Mobile",
+    phoneExtension: "",
+
+    defaultProfileLinkType: "LinkedIn",
+
+    // Shared account credentials reused for Workday / Greenhouse / etc. when
+    // they require sign-in or account creation before showing the form.
+    // Stored in chrome.storage.sync — review/clear via the Options page.
+    account: {
+      email: "ngaddam.dev@gmail.com",
+      password: "Nikhil@3115"
+    },
 
     address: {
-      line1: "",
-      city: "Tysons Corner",
+      line1: "2110 Paul Edwin Ter",
+      line2: "Apt 104",
+      city: "Falls Church",
       state: "Virginia",
       stateCode: "VA",
-      postalCode: "",
+      postalCode: "22043",
       country: "United States",
       countryCode: "US"
     },
-    currentLocation: "Tysons Corner, Virginia, USA",
+    currentLocation: "Falls Church, Virginia, USA",
 
-    // Work eligibility — sensible defaults; review before submitting
+    // Work eligibility : sensible defaults; review before submitting
     workAuthorization: {
       authorizedToWork: "Yes",
       requiresSponsorship: "Yes"
     },
 
-    // Demographics — used for EEO surveys. Defaults: Man, Asian, non-veteran.
+    // Demographics : used for EEO surveys. Defaults: Man, Asian, non-veteran.
     // Override these in the Options page if you prefer not to disclose.
     demographics: {
       gender: "Man",

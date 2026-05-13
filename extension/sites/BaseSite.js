@@ -1,4 +1,4 @@
-// BaseSite — common workflow for site-specific handlers.
+// BaseSite : common workflow for site-specific handlers.
 // Subclasses override: hostMatches(url), findFields(), customMappings(), and optionally fill().
 (function (root) {
   const ns = (root.AutoApply = root.AutoApply || {});
@@ -81,7 +81,58 @@
         if (ok) filled.push({ el, key: resolved.key, value: resolved.value });
         else unmapped.push(el);
       }
-      return { filled, unmapped, skipped, site: this.constructor.id };
+
+      // Auto-accept consent / terms / acknowledgment checkboxes. Any standalone
+      // unmapped checkbox whose surrounding label text matches consent patterns
+      // is checked by default. Radio groups, multi-option checkboxes, and any
+      // checkbox already mapped to a profile key are NOT touched here.
+      const stillUnmapped = [];
+      for (const el of unmapped) {
+        if (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "checkbox") {
+          if (this.tryAcceptConsent(el)) {
+            filled.push({ el, key: "consent", value: true });
+            continue;
+          }
+        }
+        stillUnmapped.push(el);
+      }
+      return { filled, unmapped: stillUnmapped, skipped, site: this.constructor.id };
+    }
+
+    /**
+     * If a standalone checkbox looks like a consent / terms / acknowledgment
+     * field, tick it. Uses both the field-matcher label text and a fallback
+     * scan of nearby ancestor text (some consent boxes have no <label> at all
+     * \u2014 just adjacent paragraphs).
+     */
+    tryAcceptConsent(el) {
+      if (!el || el.checked) return false;
+      // Belongs to a multi-checkbox group? Skip \u2014 user picks options themselves.
+      if (el.name) {
+        const peers = document.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`);
+        if (peers.length > 1) return false;
+      }
+      const { FieldMatcher } = ns;
+      let text = (FieldMatcher.collectLabelText(el) || "");
+      if (!text) {
+        // Walk up a few ancestors and grab their text (cap length).
+        let node = el.parentElement, hops = 0;
+        while (node && hops < 4 && text.length < 40) {
+          text = (node.innerText || "").toLowerCase();
+          node = node.parentElement;
+          hops += 1;
+        }
+      }
+      const CONSENT_RE = /\b(i\s+(agree|accept|consent|acknowledge|certify|confirm)|terms\s+(and|&)\s+conditions|privacy\s+(policy|notice)|terms\s+of\s+(use|service)|accept\s+(the\s+)?(terms|policy|conditions)|i\s+have\s+read|conditions\s+of\s+(employment|application)|legal\s+acknowledgment)\b/i;
+      if (!CONSENT_RE.test(text)) return false;
+      el.click();
+      // If click didn't take (framework guards), set checked + fire change.
+      if (!el.checked) {
+        el.checked = true;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return el.checked;
     }
   }
 

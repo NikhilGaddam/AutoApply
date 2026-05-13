@@ -1,5 +1,5 @@
 // FieldMatcher: derives a profile key from a form field's surrounding text/attrs.
-// Pure algorithm — no AI. Uses ordered regex rules over a normalized label string.
+// Pure algorithm : no AI. Uses ordered regex rules over a normalized label string.
 (function (root) {
   const ns = (root.AutoApply = root.AutoApply || {});
 
@@ -98,7 +98,7 @@
     //    Lever wraps each question in `li.application-question` (or `div.application-question`
     //    for the demographic survey) whose `.application-label` OR plain `<label>` child
     //    holds the human-readable question. For checkbox groups, each option has its own
-    //    inner <li>, so `closest('li')` returns the wrong scope — we must skip past it.
+    //    inner <li>, so `closest('li')` returns the wrong scope : we must skip past it.
     const QUESTION_SEL = "li.application-question, .application-question, fieldset, .form-group, .field";
     let node = el.parentElement;
     while (node && node !== document.body) {

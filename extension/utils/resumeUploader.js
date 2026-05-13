@@ -1,4 +1,4 @@
-// ResumeUploader — fetches a file packaged with the extension and assigns it
+// ResumeUploader : fetches a file packaged with the extension and assigns it
 // to a file <input> using the DataTransfer trick. Works in Chromium-based
 // browsers (Chrome, Brave, Edge) when the file is served from a
 // chrome-extension:// URL declared in web_accessible_resources.
@@ -41,7 +41,7 @@
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
       // Some sites (Lever) wrap the real <input type="file"> behind a styled
-      // anchor/button — dispatching change on the input is enough; the form
+      // anchor/button : dispatching change on the input is enough; the form
       // will read input.files on submit.
       return input.files && input.files.length > 0;
     } catch (e) {

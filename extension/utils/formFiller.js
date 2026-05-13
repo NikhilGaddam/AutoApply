@@ -26,23 +26,54 @@
     return fillInput(el, value);
   }
 
+  // Synonyms for option matching when the page uses different vocabulary than
+  // the profile (e.g. Tesla EEO uses "Male"/"Female" while the profile stores
+  // "Man"/"Woman", or "I am not a protected veteran" vs "I am not a veteran").
+  const SELECT_SYNONYMS = [
+    [/^man$/i, ["male"]],
+    [/^woman$/i, ["female"]],
+    [/^non-?binary$/i, ["non-binary", "nonbinary", "non binary"]],
+    [/^i am not a veteran$/i, ["i am not a protected veteran", "not a veteran", "non-veteran", "no"]],
+    [/^i am a veteran$/i, ["i identify as one or more of the classifications of protected veterans", "yes"]],
+    [/^no,? i do not have a disability$/i, ["no", "no, i do not have a disability", "no disability"]],
+    [/^yes,? i have a disability$/i, ["yes", "yes, i have a disability"]],
+    [/^prefer not to (say|answer|disclose)$/i, ["choose not to disclose", "i choose not to disclose", "decline to state", "do not wish to answer"]]
+  ];
+  function expandSynonyms(target) {
+    const out = [target];
+    for (const [re, alts] of SELECT_SYNONYMS) {
+      if (re.test(target)) {
+        for (const a of alts) if (!out.includes(a)) out.push(a);
+      }
+    }
+    return out;
+  }
+
   function fillSelect(el, value) {
     if (!el || value == null || value === "") return false;
-    const target = String(value).toLowerCase().trim();
+    const targets = expandSynonyms(String(value).toLowerCase().trim());
     let matched = null;
-    for (const opt of el.options) {
-      const t = (opt.text || "").toLowerCase().trim();
-      const v = (opt.value || "").toLowerCase().trim();
-      if (t === target || v === target) { matched = opt; break; }
-    }
-    if (!matched) {
+    // Pass 1: exact text or value match for any target / synonym.
+    outer: for (const target of targets) {
       for (const opt of el.options) {
         const t = (opt.text || "").toLowerCase().trim();
-        if (t && (t.includes(target) || target.includes(t))) { matched = opt; break; }
+        const v = (opt.value || "").toLowerCase().trim();
+        if (t === target || v === target) { matched = opt; break outer; }
+      }
+    }
+    // Pass 2: substring match (length ≥3 to avoid "man" matching "woman").
+    if (!matched) {
+      outer2: for (const target of targets) {
+        if (target.length < 3) continue;
+        for (const opt of el.options) {
+          const t = (opt.text || "").toLowerCase().trim();
+          if (t && (t.includes(target) || target.includes(t))) { matched = opt; break outer2; }
+        }
       }
     }
     if (!matched) return false;
-    el.value = matched.value;
+    setNativeValue(el, matched.value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }
@@ -60,7 +91,7 @@
         return true;
       }
     }
-    // Pass 2: substring match — but only when target is long enough that
+    // Pass 2: substring match : but only when target is long enough that
     // "woman".includes("man") style false positives are unlikely.
     if (target.length >= 4) {
       for (const box of boxes) {
@@ -85,7 +116,7 @@
     if (tag === "input") {
       if (type === "checkbox" || type === "radio") {
         // Walk up to the nearest grouping element
-        const group = el.closest("ul, fieldset, .application-question, .form-group, [role='radiogroup']") || el.parentElement;
+        const group = el.closest("ul, fieldset, .application-question, .form-group, .tds-form-input-group, .tds-form-item, [role='radiogroup']") || el.parentElement;
         return fillCheckboxGroup(group, value);
       }
       if (type === "file") return false; // can't be programmatically filled

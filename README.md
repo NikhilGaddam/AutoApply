@@ -7,7 +7,7 @@ A Chrome extension that detects job application pages and auto-fills your detail
 - **Per-site handlers**: separate classes for Lever, Greenhouse, Workday, plus a generic fallback. Add more in `extension/sites/`.
 - **Algorithmic field matching**: label / `name` / `placeholder` / `aria-*` text is normalized and matched against ordered regex rules in `utils/fieldMatcher.js`. First match wins.
 - **Framework-friendly**: sets values via the React-compatible native setter and dispatches `input` + `change`.
-- **Review overlay**: a floating toast shows counts of filled / needs-review / skipped fields, and lists the unmapped ones — click an item to scroll to and focus that field.
+- **Review overlay**: a floating toast shows counts of filled / needs-review / skipped fields, and lists the unmapped ones : click an item to scroll to and focus that field.
 - **Profile editor**: open the Options page to edit the JSON profile. Defaults are seeded from `resumes/nikhil_gaddam.pdf`.
 
 ## Install (developer mode)
@@ -75,4 +75,4 @@ extension/
 
 - **Resume upload is manual.** Browsers block scripts from setting `<input type="file">` programmatically. The handler skips file inputs and leaves them for you.
 - **Captchas / multi-step SPAs**: Workday in particular spreads fields across steps; mappings need to be re-run per step. The Re-scan button in the toast handles this.
-- **No AI yet** — by design. Field matching is rule-based for predictability.
+- **No AI yet** : by design. Field matching is rule-based for predictability.

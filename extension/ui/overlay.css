@@ -9,6 +9,16 @@
   outline: 2px solid #2ecc71 !important;
   outline-offset: 1px !important;
 }
+.autoapply-submit-ready {
+  outline: 3px solid #2563eb !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.25), 0 0 18px rgba(37, 99, 235, 0.6) !important;
+  animation: autoapply-pulse 1.6s ease-in-out infinite;
+}
+@keyframes autoapply-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.25), 0 0 18px rgba(37, 99, 235, 0.55) !important; }
+  50%      { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0.10), 0 0 26px rgba(37, 99, 235, 0.85) !important; }
+}
 
 .autoapply-toast {
   position: fixed;

@@ -27,6 +27,7 @@
         "sites/LeverSite.js",
         "sites/GreenhouseSite.js",
         "sites/WorkdaySite.js",
+        "sites/TeslaSite.js",
         "sites/GenericSite.js",
         "sites/SiteRegistry.js",
         "content.js"

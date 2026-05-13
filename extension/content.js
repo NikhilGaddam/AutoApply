@@ -35,15 +35,9 @@
   }
 
   async function trySubmit() {
-    // Try to click the form's submit button. Don't actually submit programmatically
-    // — let the user verify visually first by focusing the button.
-    const btn = document.querySelector(
-      "form#application-form button[type='submit'], form button[type='submit'], button[type='submit'], input[type='submit']"
-    );
-    if (btn) {
-      btn.scrollIntoView({ behavior: "smooth", block: "center" });
-      btn.focus();
-    }
+    // Don't actually click : let the user verify visually first. Highlight,
+    // scroll to, and focus the submit button.
+    ns.Overlay.focusSubmit();
   }
 
   async function run() {
@@ -55,6 +49,7 @@
     const result = await site.fill();
     ns.Overlay.markFilled(result.filled.map((f) => f.el));
     ns.Overlay.markUnmapped(result.unmapped);
+    ns.Overlay.highlightSubmit();
     ns.Overlay.showReview({
       ...result,
       site: Handler.label,
@@ -115,9 +110,12 @@
     setTimeout(() => { run().catch(console.error); }, 800);
 
     // Watch for lazy-loaded question wrappers (Lever's demographic survey
-    // section, multi-step Workday pages, etc.) and quietly fill them.
-    const QUESTION_SEL = "li.application-question, .application-question, fieldset.form-group";
+    // section, multi-step Workday/Tesla pages, etc.). For brand-new form
+    // sections (e.g. Tesla step 2) we re-run the full flow so the toast
+    // reflects the new step; for incremental additions a quiet fill suffices.
+    const QUESTION_SEL = "li.application-question, .application-question, fieldset.form-group, .tds-form-item, .tds-form-fieldset, .tds-form-input-group";
     let pending = false;
+    let lastFieldCount = document.querySelectorAll("form input[name], form select[name], form textarea[name]").length;
     const observer = new MutationObserver((mutations) => {
       let hasNew = false;
       for (const m of mutations) {
@@ -131,10 +129,25 @@
       }
       if (!hasNew || pending) return;
       pending = true;
-      setTimeout(() => { pending = false; quietFill(); }, 400);
+      setTimeout(() => {
+        pending = false;
+        const now = document.querySelectorAll("form input[name], form select[name], form textarea[name]").length;
+        // Heuristic: if the set of named fields changed substantially (e.g.
+        // a multi-step navigation replaced the form), do a full run() so the
+        // user gets a fresh toast & submit-button highlight; otherwise just
+        // quietly fill any newly-revealed widgets.
+        if (Math.abs(now - lastFieldCount) >= 3) {
+          lastFieldCount = now;
+          run().catch(console.error);
+        } else {
+          lastFieldCount = now;
+          quietFill();
+        }
+      }, 600);
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    // Stop observing after 30s to avoid runaway work on long-running pages
-    setTimeout(() => observer.disconnect(), 30000);
+    // Stop observing after 5 min : long enough to cover realistic multi-step
+    // application flows (Tesla, Workday) without running indefinitely.
+    setTimeout(() => observer.disconnect(), 5 * 60 * 1000);
   }
 })();

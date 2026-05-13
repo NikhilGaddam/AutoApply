@@ -1,4 +1,4 @@
-// Greenhouse (boards.greenhouse.io) — stub with the canonical field names.
+// Greenhouse (boards.greenhouse.io) : stub with the canonical field names.
 // Extend customMappings as you encounter more form variants.
 (function (root) {
   const ns = (root.AutoApply = root.AutoApply || {});
@@ -24,7 +24,7 @@
       byId("email", "email");
       byId("phone", "phone");
       // Common Greenhouse URL question IDs use job_application[answers_attributes]
-      // and vary by board — generic matching will catch those.
+      // and vary by board : generic matching will catch those.
       return map;
     }
   }

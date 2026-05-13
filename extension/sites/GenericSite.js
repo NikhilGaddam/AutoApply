@@ -1,4 +1,4 @@
-// GenericSite — fallback handler. Pure label/name/placeholder matching.
+// GenericSite : fallback handler. Pure label/name/placeholder matching.
 (function (root) {
   const ns = (root.AutoApply = root.AutoApply || {});
   const { BaseSite } = ns;

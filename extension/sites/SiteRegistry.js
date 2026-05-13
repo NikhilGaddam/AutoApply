@@ -1,4 +1,4 @@
-// SiteRegistry — picks the most specific site handler for the current URL.
+// SiteRegistry : picks the most specific site handler for the current URL.
 (function (root) {
   const ns = (root.AutoApply = root.AutoApply || {});
   // Order matters: most specific first.
@@ -6,6 +6,7 @@
     ns.LeverSite,
     ns.GreenhouseSite,
     ns.WorkdaySite,
+    ns.TeslaSite,
     ns.GenericSite
   ];
 
