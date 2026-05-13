@@ -76,42 +76,167 @@
     }
 
     async fill() {
-      // 1. Landing page: click "Apply Manually" if visible.
+      // Run one tick now so caller (content.js) gets immediate result.
+      const result = await this._tick();
+      // Start a persistent background driver that re-ticks every ~700ms.
+      // Workday is an SPA that lazily renders sign-in tiles, auth forms,
+      // and each step's form. The base MutationObserver in content.js does
+      // not match Workday's wrappers, so we drive the flow ourselves.
+      this._ensureDriver();
+      return result;
+    }
+
+    /**
+     * One pass: detect what step we're on, click the appropriate tile if
+     * any, fill any currently-visible inputs, drive Workday dropdowns, and
+     * (only on the auth gate) submit. Never clicks Next/Submit on regular
+     * form steps : the user keeps that responsibility.
+     */
+    async _tick() {
+      // Diagnostic: stamp document.documentElement so page-world CDP probes
+      // can confirm the driver is alive and see what step it last saw.
+      try {
+        const d = document.documentElement;
+        d.setAttribute("data-autoapply-tick", String(Date.now()));
+        const tileVisible = !!document.querySelector('[data-automation-id="SignInWithEmailButton"]');
+        const emailVisible = !!document.querySelector('[data-automation-id="email"]');
+        const nextVisible = !!document.querySelector('[data-automation-id="pageFooterNextButton"]');
+        d.setAttribute("data-autoapply-step",
+          nextVisible ? "form" : (emailVisible ? "auth" : (tileVisible ? "tiles" : "unknown")));
+      } catch (_) {}
+
+      // 1. Landing page tile.
       const landing = document.querySelector('[data-automation-id="applyManually"]');
-      if (landing && !document.querySelector('[data-automation-id="signInSubmitButton"]') &&
-          !document.querySelector('[data-automation-id="createAccountSubmitButton"]') &&
-          !document.querySelector('[data-automation-id="legalNameSection_firstName"]')) {
+      if (landing && !this._isAuthOrFormStep()) {
         await this._realClick(landing);
-        await new Promise((r) => setTimeout(r, 2500));
+        await new Promise((r) => setTimeout(r, 1200));
       }
-      // 2. Sign-in selector tile (Google / LinkedIn / Email): pick Email.
-      const signInWithEmail = Array.from(document.querySelectorAll("button, a"))
-        .find((b) => /sign in with email/i.test((b.innerText || "").trim()));
-      if (signInWithEmail && !document.querySelector('[data-automation-id="email"]')) {
-        await this._realClick(signInWithEmail);
-        await new Promise((r) => setTimeout(r, 1500));
+      // 2. Sign-in tile selector (Apple / Google / LinkedIn / Email).
+      const signInTile = document.querySelector('[data-automation-id="SignInWithEmailButton"]')
+        || Array.from(document.querySelectorAll("button, a"))
+            .find((b) => /sign in with email/i.test((b.innerText || "").trim()));
+      const onAuthForm = !!(document.querySelector('[data-automation-id="signInSubmitButton"]') ||
+                            document.querySelector('[data-automation-id="createAccountSubmitButton"]'));
+      if (signInTile && !onAuthForm && !document.querySelector('[data-automation-id="email"]')) {
+        await this._realClick(signInTile);
+        await new Promise((r) => setTimeout(r, 1200));
       }
 
       // 3. Fill all currently-visible fields via the standard pipeline.
       const result = await super.fill();
 
-      // 3b. Workday's Country / State / Phone Type are custom button-widgets,
-      //     not native <select>. Drive them manually.
+      // 3b. Workday's Country / State / Phone Type are custom button-widgets.
       await this._fillWorkdayDropdowns();
 
-      // 4. If we're on the auth gate (sign-in or create-account form) and
-      //    haven't tried yet this fill() call, drive it.
-      if (!this._authAttempted) {
+      // 4. Auth gate: after filling email/password (and verify+consent on
+      //    Create Account), click the visible submit. Sign In / Create
+      //    Account are effectively the "next" button on step 1 of 7, so we
+      //    treat them as auto-submittable. Tracked per-URL so we don't loop.
+      if (location.href !== window.__autoApplyAuthUrl) {
+        window.__autoApplyAuthAttempted = false;
+        window.__autoApplyAuthUrl = location.href;
+      }
+      if (!window.__autoApplyAuthAttempted) {
         const signInBtn = document.querySelector('[data-automation-id="signInSubmitButton"]');
         const createBtn = document.querySelector('[data-automation-id="createAccountSubmitButton"]');
-        const emailInput = document.querySelector('[data-automation-id="email"]');
-        if (emailInput && emailInput.value && (signInBtn || createBtn)) {
-          this._authAttempted = true;
-          await this._attemptAuth();
+        const emailEl = document.querySelector('[data-automation-id="email"]');
+        const pwEl = document.querySelector('[data-automation-id="password"]');
+        const verifyEl = document.querySelector('[data-automation-id="verifyPassword"]');
+        const consentBox = document.querySelector('[data-automation-id="createAccountCheckbox"]');
+        const ready = !!(emailEl?.value && pwEl?.value &&
+          (signInBtn || (createBtn && verifyEl?.value && (!consentBox || consentBox.checked))));
+        if (ready) {
+          window.__autoApplyAuthAttempted = true;
+          // Allow React validation pass to settle after the fill events.
+          await new Promise((r) => setTimeout(r, 600));
+          // Blur any focused input so React picks up final value.
+          try { document.activeElement?.blur?.(); } catch (_) {}
+          await new Promise((r) => setTimeout(r, 100));
+          const target = signInBtn || createBtn;
+          document.documentElement.setAttribute("data-autoapply-auth", "submit:" + (signInBtn ? "signin" : "create"));
+          try {
+            const r = await this._submitAndWait(target, {
+              successSel: '[data-automation-id="legalNameSection_firstName"], #name--legalName--firstName, [data-automation-id="pageFooterNextButton"]',
+              errorSel: '[data-automation-id="errorMessage"], [role="alert"]',
+              timeoutMs: 12000
+            });
+            document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
+            // NOTE: previously we would fall through to createAccountLink on
+            // sign-in failure, but that creates duplicate accounts on tenants
+            // where the email is already registered with a different password.
+            // We instead leave the user to choose Sign In vs Create Account
+            // (these are the "submit" buttons of step 1 of 7). The extension
+            // re-fills credentials on the chosen form so the user only needs
+            // to click the visible button.
+          } catch (e) {
+            document.documentElement.setAttribute("data-autoapply-auth", "err:" + e.message);
+          }
         }
       }
 
+      // Refresh overlay marks after a tick.
+      try {
+        if (ns.Overlay && result?.filled?.length) {
+          ns.Overlay.markFilled(result.filled.map((f) => f.el).filter(Boolean));
+        }
+        if (ns.Overlay && result?.unmapped?.length) {
+          ns.Overlay.markUnmapped(result.unmapped);
+        }
+      } catch (_) {}
+
       return result;
+    }
+
+    _isAuthOrFormStep() {
+      return !!(
+        document.querySelector('[data-automation-id="signInSubmitButton"]') ||
+        document.querySelector('[data-automation-id="createAccountSubmitButton"]') ||
+        document.querySelector('[data-automation-id="pageFooterNextButton"]') ||
+        document.querySelector('[data-automation-id="legalNameSection_firstName"]') ||
+        document.querySelector('[data-automation-id="email"]') ||
+        document.querySelector('[data-automation-id="SignInWithEmailButton"]')
+      );
+    }
+
+    /**
+     * Start a window-scoped polling loop that re-ticks every ~700ms for up
+     * to 10 minutes. Idempotent: only one driver per tab. Persists across
+     * content.js fill() calls (each call constructs a new WorkdaySite, but
+     * the driver lives on window.__autoApplyWorkdayDriver).
+     */
+    _ensureDriver() {
+      if (window.__autoApplyWorkdayDriver) return;
+      window.__autoApplyWorkdayDriver = true;
+      const startedAt = Date.now();
+      const BUDGET_MS = 10 * 60 * 1000;
+      const TICK_MS = 700;
+      let inflight = false;
+      const tick = async () => {
+        if (Date.now() - startedAt > BUDGET_MS) {
+          window.__autoApplyWorkdayDriver = false;
+          return;
+        }
+        if (!inflight) {
+          inflight = true;
+          try {
+            // Use a fresh instance each tick so customMappings() re-runs
+            // against the currently-rendered DOM (each step has different
+            // inputs).
+            const fresh = new WorkdaySite(this.profile);
+            fresh._authAttempted = !!window.__autoApplyAuthAttempted;
+            fresh._authUrl = window.__autoApplyAuthUrl;
+            await fresh._tick();
+            window.__autoApplyAuthAttempted = fresh._authAttempted;
+            window.__autoApplyAuthUrl = fresh._authUrl;
+          } catch (e) {
+            console.warn("AutoApply Workday driver tick error:", e);
+          } finally {
+            inflight = false;
+          }
+        }
+        setTimeout(tick, TICK_MS);
+      };
+      setTimeout(tick, TICK_MS);
     }
 
     /**
@@ -164,26 +289,98 @@
      */
     async _submitAndWait(btn, { successSel, errorSel, timeoutMs }) {
       const beforeUrl = location.href;
-      await this._realClick(btn);
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        await new Promise((r) => setTimeout(r, 250));
-        if (successSel && document.querySelector(successSel)) return "success";
-        if (location.href !== beforeUrl) return "success";
-        if (errorSel) {
-          const errs = document.querySelectorAll(errorSel);
-          if (errs.length) {
-            const txt = Array.from(errs).map((e) => (e.innerText || "").trim()).join(" | ");
-            if (txt) return "error";
+      document.documentElement.setAttribute("data-autoapply-submit", "clicking:" + (btn?.getAttribute("data-automation-id") || btn?.tagName));
+
+      // Helper that polls for either success or error indicator. Returns
+      // "success" | "error" | "timeout".
+      const waitFor = async (ms) => {
+        const start = Date.now();
+        while (Date.now() - start < ms) {
+          await new Promise((r) => setTimeout(r, 200));
+          if (successSel && document.querySelector(successSel)) return "success";
+          if (location.href !== beforeUrl) return "success";
+          if (errorSel) {
+            const errs = document.querySelectorAll(errorSel);
+            if (errs.length) {
+              const txt = Array.from(errs).map((e) => (e.innerText || "").trim()).join(" | ");
+              if (txt) return "error";
+            }
           }
         }
+        return "timeout";
+      };
+
+      // Strategy 1: faithful synthetic pointer/mouse/click sequence.
+      await this._realClick(btn);
+      let r = await waitFor(Math.min(timeoutMs, 3000));
+      if (r !== "timeout") {
+        document.documentElement.setAttribute("data-autoapply-submit", r);
+        return r;
       }
-      return "timeout";
+      // Strategy 2: bare HTMLElement.click() (covers cases where React's
+      // onClick listener checks isTrusted on PointerEvent but accepts the
+      // browser's own click() invocation).
+      try { btn.click(); } catch (_) {}
+      r = await waitFor(Math.min(timeoutMs, 3000));
+      if (r !== "timeout") {
+        document.documentElement.setAttribute("data-autoapply-submit", r + ":fallback-click");
+        return r;
+      }
+      // Strategy 3: HTMLFormElement.requestSubmit(btn) for type=submit
+      // buttons inside a <form>. Triggers the form's submit listener with
+      // the submitter set to the button.
+      try {
+        const f = btn.closest("form");
+        if (f && typeof f.requestSubmit === "function") f.requestSubmit(btn);
+      } catch (_) {}
+      r = await waitFor(Math.min(timeoutMs, 3000));
+      if (r !== "timeout") {
+        document.documentElement.setAttribute("data-autoapply-submit", r + ":fallback-submit");
+        return r;
+      }
+      // Strategy 4: focus the button and dispatch a keydown Enter. Some
+      // React widgets register accessibility key handlers (Space / Enter on
+      // a focused button) that synthesize the activation event differently
+      // from a click and bypass the isTrusted guard on click handlers.
+      try {
+        btn.focus();
+        const keyOpts = { bubbles: true, cancelable: true, composed: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+        btn.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
+        btn.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
+        btn.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
+      } catch (_) {}
+      r = await waitFor(Math.min(timeoutMs, 3000));
+      if (r !== "timeout") {
+        document.documentElement.setAttribute("data-autoapply-submit", r + ":fallback-key");
+        return r;
+      }
+      // Strategy 5: focus the password field and press Enter to trigger
+      // implicit form submission via the browser's native submit pipeline.
+      try {
+        const pw = document.querySelector('[data-automation-id="verifyPassword"]') ||
+                   document.querySelector('[data-automation-id="password"]');
+        if (pw) {
+          pw.focus();
+          const keyOpts = { bubbles: true, cancelable: true, composed: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+          pw.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
+          pw.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
+          pw.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
+        }
+      } catch (_) {}
+      r = await waitFor(timeoutMs);
+      document.documentElement.setAttribute("data-autoapply-submit", r + ":fallback-pwenter");
+      return r;
     }
 
     /** Faithful click: pointer + mouse + click, all bubbles+composed. */
     async _realClick(el) {
       if (!el) return false;
+      // Workday wraps its real submit/submit-like buttons with an invisible
+      // sibling `<div data-automation-id="click_filter">` that captures real
+      // clicks and forwards them. Synthetic events on the button itself are
+      // ignored. Re-target to the click_filter when present.
+      const filtered = this._resolveClickFilter(el);
+      if (filtered) el = filtered;
       el.scrollIntoView({ block: "center" });
       await new Promise((r) => setTimeout(r, 50));
       const rect = el.getBoundingClientRect();
@@ -200,6 +397,25 @@
         try { el.click(); } catch (_) {}
       }
       return true;
+    }
+
+    /**
+     * If `el` is a Workday <button> that has a sibling click_filter overlay
+     * (Workday's own anti-bot/intercept layer), return the click_filter so
+     * the click actually registers. Otherwise return null.
+     */
+    _resolveClickFilter(el) {
+      if (!el || el.getAttribute?.("data-automation-id") === "click_filter") return null;
+      // Workday pairs a real BUTTON (aria-hidden, tabindex=-2) with a
+      // sibling DIV[data-automation-id=click_filter] that owns the actual
+      // pointer/click handler. Only redirect when our element is one of
+      // those hidden buttons AND the filter is its direct sibling.
+      if (el.tagName !== "BUTTON") return null;
+      if (el.getAttribute?.("aria-hidden") !== "true") return null;
+      const parent = el.parentElement;
+      if (!parent) return null;
+      const filter = parent.querySelector(':scope > [data-automation-id="click_filter"]');
+      return filter || null;
     }
 
     /**

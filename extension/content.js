@@ -99,6 +99,10 @@
     const url = window.location.href.toLowerCase();
     if (/\/apply(\b|\/|\?|$)/.test(url)) return true;
     if (/application/.test(url)) return true;
+    // Workday redirects /apply -> /login?redirect=...%2Fapply... before the
+    // user authenticates. Treat any Workday host as an application context
+    // so the WorkdaySite driver can drive the auth gate.
+    if (/\.myworkdayjobs\.com$|\.workday\.com$/.test(window.location.hostname)) return true;
     const form = document.querySelector("form");
     if (!form) return false;
     const text = (form.innerText || "").toLowerCase();
