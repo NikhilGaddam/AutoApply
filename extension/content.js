@@ -7,10 +7,29 @@
 
   const STORAGE_KEY = "autoapply.profile";
 
+  // Deep-merge stored profile over defaults so newly-added keys (e.g. demographics)
+  // are always present even if the user's saved profile predates them.
+  function deepMerge(target, source) {
+    if (source == null || typeof source !== "object" || Array.isArray(source)) return source ?? target;
+    const out = Array.isArray(target) ? [] : { ...(target || {}) };
+    for (const k of Object.keys(source)) {
+      const sv = source[k];
+      const tv = out[k];
+      if (sv && typeof sv === "object" && !Array.isArray(sv) && tv && typeof tv === "object" && !Array.isArray(tv)) {
+        out[k] = deepMerge(tv, sv);
+      } else {
+        out[k] = sv;
+      }
+    }
+    return out;
+  }
+
   async function loadProfile() {
     try {
       const stored = await chrome.storage.sync.get(STORAGE_KEY);
-      if (stored && stored[STORAGE_KEY]) return stored[STORAGE_KEY];
+      if (stored && stored[STORAGE_KEY]) {
+        return deepMerge(ns.DEFAULT_PROFILE, stored[STORAGE_KEY]);
+      }
     } catch (_) {}
     return ns.DEFAULT_PROFILE;
   }
@@ -33,7 +52,7 @@
     const Handler = ns.SiteRegistry.pickHandler(url);
     const site = new Handler(profile);
     ns.Overlay.clearMarks();
-    const result = site.fill();
+    const result = await site.fill();
     ns.Overlay.markFilled(result.filled.map((f) => f.el));
     ns.Overlay.markUnmapped(result.unmapped);
     ns.Overlay.showReview({
@@ -43,6 +62,20 @@
       onCancel: (reason) => { if (reason === "rescan") run(); }
     });
     return result;
+  }
+
+  // Quietly re-fill any newly added question wrappers (e.g. demographic survey
+  // sections that load lazily) without re-rendering the overlay each time.
+  async function quietFill() {
+    try {
+      const profile = await loadProfile();
+      const url = new URL(window.location.href);
+      const Handler = ns.SiteRegistry.pickHandler(url);
+      const site = new Handler(profile);
+      const result = await site.fill();
+      ns.Overlay.markFilled(result.filled.map((f) => f.el));
+      return result;
+    } catch (e) { console.warn("AutoApply quietFill:", e); }
   }
 
   // Message API used by popup
@@ -80,5 +113,28 @@
   if (looksLikeApplicationForm()) {
     // Delay slightly to let SPA forms (Workday/Greenhouse) finish rendering.
     setTimeout(() => { run().catch(console.error); }, 800);
+
+    // Watch for lazy-loaded question wrappers (Lever's demographic survey
+    // section, multi-step Workday pages, etc.) and quietly fill them.
+    const QUESTION_SEL = "li.application-question, .application-question, fieldset.form-group";
+    let pending = false;
+    const observer = new MutationObserver((mutations) => {
+      let hasNew = false;
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if (node.matches?.(QUESTION_SEL) || node.querySelector?.(QUESTION_SEL)) {
+            hasNew = true; break;
+          }
+        }
+        if (hasNew) break;
+      }
+      if (!hasNew || pending) return;
+      pending = true;
+      setTimeout(() => { pending = false; quietFill(); }, 400);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    // Stop observing after 30s to avoid runaway work on long-running pages
+    setTimeout(() => observer.disconnect(), 30000);
   }
 })();

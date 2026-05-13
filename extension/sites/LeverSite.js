@@ -14,11 +14,23 @@
     }
 
     findFields() {
-      // Scope to the application form when present
-      const form = document.querySelector("form#application-form, form.application-form, form[action*='apply']") || document;
-      const selectors = "input, select, textarea";
+      // Lever splits the page into multiple <form>s: the main application form
+      // (id=application-form) and a separate one for the demographic survey.
+      // Include every form on the page so we cover both.
+      const forms = Array.from(document.querySelectorAll("form"));
+      const scope = forms.length ? forms : [document];
       const { FormFiller } = ns;
-      return Array.from(form.querySelectorAll(selectors)).filter(FormFiller.isFillable);
+      const seen = new Set();
+      const all = [];
+      for (const f of scope) {
+        for (const el of f.querySelectorAll("input, select, textarea")) {
+          if (seen.has(el)) continue;
+          if (!FormFiller.isFillable(el)) continue;
+          seen.add(el);
+          all.push(el);
+        }
+      }
+      return all;
     }
 
     customMappings() {

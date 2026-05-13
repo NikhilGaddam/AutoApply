@@ -53,16 +53,24 @@
      * Main fill routine.
      * @returns {{filled: Array, unmapped: Array, skipped: Array}}
      */
-    fill() {
+    async fill() {
       const filled = [];
       const unmapped = [];
       const skipped = [];
       const overrides = this.customMappings();
       const fields = this.findFields();
+      const { ResumeUploader } = ns;
 
       for (const el of fields) {
-        // Skip file inputs — they need user action
+        // File inputs: try resume/CV auto-upload
         if (el.tagName.toLowerCase() === "input" && (el.type || "").toLowerCase() === "file") {
+          const kind = ResumeUploader?.classifyFileInput(el);
+          if (kind === "resume" && this.profile?.resumeAsset) {
+            try {
+              const ok = await ResumeUploader.uploadResume(el, this.profile);
+              if (ok) { filled.push({ el, key: "resume", value: this.profile.resumeFileName }); continue; }
+            } catch (e) { console.warn("AutoApply: resume upload failed", e); }
+          }
           skipped.push({ el, reason: "file-upload" });
           continue;
         }

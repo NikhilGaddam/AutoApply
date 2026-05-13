@@ -51,14 +51,25 @@
     if (!container || value == null) return false;
     const target = String(value).toLowerCase().trim();
     const boxes = container.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+    // Pass 1: exact match
     for (const box of boxes) {
       const lbl = box.closest("label") || box.parentElement;
       const text = (lbl?.innerText || box.value || "").toLowerCase().trim();
-      if (text === target || text.includes(target)) {
-        if (!box.checked) {
-          box.click();
-        }
+      if (text === target) {
+        if (!box.checked) box.click();
         return true;
+      }
+    }
+    // Pass 2: substring match — but only when target is long enough that
+    // "woman".includes("man") style false positives are unlikely.
+    if (target.length >= 4) {
+      for (const box of boxes) {
+        const lbl = box.closest("label") || box.parentElement;
+        const text = (lbl?.innerText || box.value || "").toLowerCase().trim();
+        if (text && (text.includes(target) || target.includes(text))) {
+          if (!box.checked) box.click();
+          return true;
+        }
       }
     }
     return false;

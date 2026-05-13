@@ -26,11 +26,17 @@
     // Work eligibility — sensible defaults; review before submitting
     workAuthorization: {
       authorizedToWork: "Yes",
-      requiresSponsorship: "Yes",
-      gender: "",
-      race: "",
+      requiresSponsorship: "Yes"
+    },
+
+    // Demographics — used for EEO surveys. Defaults: Man, Asian, non-veteran.
+    // Override these in the Options page if you prefer not to disclose.
+    demographics: {
+      gender: "Man",
+      race: "Asian",
+      ethnicity: "Not Hispanic or Latino",
       veteranStatus: "I am not a veteran",
-      disabilityStatus: "I do not wish to answer"
+      disabilityStatus: "No, I do not have a disability"
     },
 
     links: {
@@ -46,6 +52,11 @@
     yearsOfExperience: "4",
     desiredSalary: "",
     noticePeriod: "2 weeks",
+
+    // Common employer screening questions
+    previouslyEmployed: "No",
+    referredByEmployee: "No",
+    over18: "Yes",
 
     education: [
       {
@@ -93,9 +104,11 @@
       "Elasticsearch", "Kafka", "Redis", "PostgreSQL", "LangChain", "AWS", "GCP", "Azure"
     ],
 
-    // Path is informational only; Chrome can't programmatically pick a local file
-    // due to security restrictions. User must click the resume upload manually.
-    resumePath: "resumes/nikhil_gaddam.pdf"
+    // Path inside the extension package, resolved via chrome.runtime.getURL().
+    // The DataTransfer trick lets us assign this to <input type="file">.
+    resumeAsset: "assets/resume.pdf",
+    resumeFileName: "nikhil_gaddam.pdf",
+    resumeMimeType: "application/pdf"
   };
 
   root.AutoApply = root.AutoApply || {};
