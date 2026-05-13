@@ -24,9 +24,15 @@
     // falls back to Create Account using a +wdN Gmail alias so the real
     // inbox still receives all Workday emails.
     account: {
+      // Primary credentials. If the primary email/password fails Workday sign-in
+      // the extension falls back to creating a new +wdN account automatically.
       email: "ngaddam.dev@gmail.com",
       password: "Nikhil@3115",
-      emailCreate: "ngaddam.dev@gmail.com",  // base; extension adds +wdN suffix
+      // Verified alias created by AutoApply — update email/password here after
+      // clicking the Workday verification link in Gmail for ngaddam.dev+wd3.
+      emailVerified: "ngaddam.dev+wd3@gmail.com",
+      passwordVerified: "AutoApply@2026",
+      emailCreate: "ngaddam.dev@gmail.com",  // base for +wdN aliases
       passwordCreate: "AutoApply@2026"
     },
 
