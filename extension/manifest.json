@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "AutoApply",
+  "version": "0.1.0",
+  "description": "Detects job application pages and auto-fills your details. Highlights fields it couldn't map for review.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "AutoApply",
+    "default_popup": "popup/popup.html"
+  },
+  "options_page": "options/options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["ui/overlay.css"],
+      "js": [
+        "data/defaultProfile.js",
+        "utils/fieldMatcher.js",
+        "utils/formFiller.js",
+        "ui/overlay.js",
+        "sites/BaseSite.js",
+        "sites/LeverSite.js",
+        "sites/GreenhouseSite.js",
+        "sites/WorkdaySite.js",
+        "sites/GenericSite.js",
+        "sites/SiteRegistry.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }

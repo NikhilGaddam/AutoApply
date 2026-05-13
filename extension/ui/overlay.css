@@ -1,0 +1,66 @@
+/* AutoApply overlay & highlights */
+.autoapply-highlight {
+  outline: 2px solid #f5a623 !important;
+  outline-offset: 1px !important;
+  box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.18) !important;
+  transition: outline-color 0.2s ease;
+}
+.autoapply-filled {
+  outline: 2px solid #2ecc71 !important;
+  outline-offset: 1px !important;
+}
+
+.autoapply-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  background: #111827;
+  color: #f9fafb;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 12px 14px;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  max-width: 360px;
+}
+.autoapply-toast h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #93c5fd;
+}
+.autoapply-toast .autoapply-row { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
+.autoapply-toast .autoapply-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.autoapply-toast button {
+  font: inherit;
+  border: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.autoapply-toast .autoapply-primary { background: #2563eb; color: white; }
+.autoapply-toast .autoapply-secondary { background: #374151; color: #e5e7eb; }
+.autoapply-toast .autoapply-danger { background: #b91c1c; color: white; }
+.autoapply-toast .autoapply-close {
+  position: absolute; top: 6px; right: 8px;
+  background: transparent; color: #9ca3af; padding: 2px 6px;
+}
+
+.autoapply-toast .autoapply-unmapped-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.autoapply-toast .autoapply-unmapped-list li {
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #fde68a;
+}
+.autoapply-toast .autoapply-unmapped-list li:hover { background: #1f2937; }

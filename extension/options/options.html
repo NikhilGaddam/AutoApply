@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AutoApply — Profile</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1>AutoApply Profile</h1>
+    <p class="muted">These values are used to auto-fill job applications. Stored locally in <code>chrome.storage.sync</code>.</p>
+    <textarea id="json" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="save" class="primary">Save</button>
+      <button id="reset" class="secondary">Reset to defaults</button>
+      <span id="status" class="status"></span>
+    </div>
+  </main>
+  <script src="../data/defaultProfile.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Personal resume files
+resumes/*.pdf
+resumes/*.docx
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Node
+node_modules/
