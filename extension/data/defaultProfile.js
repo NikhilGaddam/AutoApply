@@ -20,9 +20,14 @@
     // Shared account credentials reused for Workday / Greenhouse / etc. when
     // they require sign-in or account creation before showing the form.
     // Stored in chrome.storage.sync — review/clear via the Options page.
+    // Sign-in uses `email` + `password`. If sign-in fails the extension
+    // falls back to Create Account using a +wdN Gmail alias so the real
+    // inbox still receives all Workday emails.
     account: {
       email: "ngaddam.dev@gmail.com",
-      password: "Nikhil@3115"
+      password: "Nikhil@3115",
+      emailCreate: "ngaddam.dev@gmail.com",  // base; extension adds +wdN suffix
+      passwordCreate: "AutoApply@2026"
     },
 
     address: {
