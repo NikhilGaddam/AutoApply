@@ -53,20 +53,36 @@
     }
 
     /**
-     * Fill a Greenhouse react-select combobox by simulating a click to open
-     * the menu, then clicking the matching option.
+     * Fill a Greenhouse react-select combobox using keyboard navigation.
+     * Focuses the input, presses ArrowDown to open the menu, navigates
+     * to the matching option with ArrowDown, then confirms with Enter.
+     * This avoids isTrusted issues with programmatic click events.
      */
     async _fillGhCombo(el, value) {
       if (!el || value == null || value === "") return false;
       const { FormFiller } = ns;
 
-      // Click to open the dropdown
-      try { el.focus(); } catch (_) {}
-      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, button: 0 }));
-      el.dispatchEvent(new MouseEvent("mouseup",   { bubbles: true, cancelable: true, view: window, button: 0 }));
-      el.dispatchEvent(new MouseEvent("click",     { bubbles: true, cancelable: true, view: window, button: 0 }));
+      const targets = (FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
+      const isMatch = (text) => {
+        const t = (text || "").toLowerCase().trim();
+        for (const target of targets) {
+          if (t === target) return true;
+          if (target.length >= 3 && (t.includes(target) || target.includes(t))) return true;
+        }
+        return false;
+      };
 
-      // Wait for the menu to appear (up to 2s)
+      const dispatchKey = (key, keyCode) => el.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true })
+      );
+
+      try { el.focus(); } catch (_) {}
+      await new Promise(r => setTimeout(r, 100));
+
+      // ArrowDown opens the menu and focuses the first option
+      dispatchKey("ArrowDown", 40);
+
+      // Wait for menu to appear (up to 2s)
       let menu = null;
       for (let i = 0; i < 20; i++) {
         menu = document.querySelector("[class*='select__menu']");
@@ -75,38 +91,20 @@
       }
       if (!menu) return false;
 
-      // Build candidate values via synonym expansion
-      const targets = (FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
-      const options = Array.from(menu.querySelectorAll("[class*='select__option']"));
-
-      let matched = null;
-      // Pass 1: exact text match
-      outer: for (const target of targets) {
-        for (const opt of options) {
-          if ((opt.textContent || "").toLowerCase().trim() === target) { matched = opt; break outer; }
+      // Navigate options with ArrowDown until target is focused, then Enter
+      for (let i = 0; i < 10; i++) {
+        const focused = menu.querySelector("[class*='select__option--is-focused'], [class*='option--is-focused']");
+        if (focused && isMatch(focused.textContent)) {
+          dispatchKey("Enter", 13);
+          await new Promise(r => setTimeout(r, 100));
+          return true;
         }
-      }
-      // Pass 2: substring (target or option text >= 3 chars)
-      if (!matched) {
-        outer2: for (const target of targets) {
-          if (target.length < 3) continue;
-          for (const opt of options) {
-            const t = (opt.textContent || "").toLowerCase().trim();
-            if (t && (t.includes(target) || target.includes(t))) { matched = opt; break outer2; }
-          }
-        }
+        dispatchKey("ArrowDown", 40);
+        await new Promise(r => setTimeout(r, 80));
       }
 
-      if (!matched) {
-        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        return false;
-      }
-
-      matched.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, button: 0 }));
-      matched.dispatchEvent(new MouseEvent("mouseup",   { bubbles: true, cancelable: true, view: window, button: 0 }));
-      matched.click();
-      await new Promise(r => setTimeout(r, 50));
-      return true;
+      dispatchKey("Escape", 27);
+      return false;
     }
   }
 
