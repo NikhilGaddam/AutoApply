@@ -143,7 +143,8 @@
       const landing = document.querySelector('[data-automation-id="applyManually"]');
       if (landing && !this._isAuthOrFormStep()) {
         await this._realClick(landing);
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 2500)); // wait for auth page to render
+        return; // let next tick handle the auth page
       }
       // 2. Sign-in tile selector (Apple / Google / LinkedIn / Email).
       const signInTile = document.querySelector('[data-automation-id="SignInWithEmailButton"]')
@@ -153,7 +154,8 @@
                             document.querySelector('[data-automation-id="createAccountSubmitButton"]'));
       if (signInTile && !onAuthForm && !document.querySelector('[data-automation-id="email"]')) {
         await this._realClick(signInTile);
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 2500)); // wait for email/password form to expand
+        return; // let next tick fill the form
       }
 
       // 3. Fill all currently-visible fields via the standard pipeline.
@@ -176,21 +178,23 @@
       const verifyEl   = document.querySelector('[data-automation-id="verifyPassword"]');
       const consentBox = document.querySelector('[data-automation-id="createAccountCheckbox"]');
 
-      // Sign-in form: try once per session; on failure wait 2s then switch to Create Account.
+      // Sign-in form: try once per session; on failure wait 3s then switch to Create Account.
       if (signInBtn && !SS.get("signInFailed") && emailEl?.value && pwEl?.value) {
-        await new Promise((r) => setTimeout(r, 600));
+        // Extra pause: let React finish processing the filled values.
+        await new Promise((r) => setTimeout(r, 2000));
         try { document.activeElement?.blur?.(); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 1000)); // blur settle
         document.documentElement.setAttribute("data-autoapply-auth", "submit:signin");
         let r = await this._submitAndWait(signInBtn, {
           successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
           errorSel: '[data-automation-id="errorMessage"]',
-          timeoutMs: 8000
+          timeoutMs: 10000
         });
         // Workday redirects to /login even on wrong credentials, so a URL change
-        // alone is not a real sign-in success. Wait for any pending redirect to
-        // settle, then verify we actually landed on the application form.
+        // alone is not a real sign-in success. Wait 3s for any pending redirect to
+        // fully settle, then verify we actually landed on the application form.
         if (r === "success") {
-          await new Promise((res) => setTimeout(res, 1500));
+          await new Promise((res) => setTimeout(res, 3000));
           const onAppForm = !!(
             document.querySelector('[data-automation-id="pageFooterNextButton"]') ||
             document.querySelector('[data-automation-id="legalNameSection_firstName"]')
@@ -200,10 +204,13 @@
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
         if (r !== "success") {
           SS.set("signInFailed", "1");
-          // Wait 2s then switch to Create Account.
-          await new Promise((res) => setTimeout(res, 2000));
+          // Wait 3s then switch to Create Account.
+          await new Promise((res) => setTimeout(res, 3000));
           const cl2 = document.querySelector('[data-automation-id="createAccountLink"]');
-          if (cl2) { await this._realClick(cl2); await new Promise((res) => setTimeout(res, 1000)); }
+          if (cl2) {
+            await this._realClick(cl2);
+            await new Promise((res) => setTimeout(res, 3000)); // wait for create form to expand
+          }
         }
         return;
       }
@@ -211,22 +218,24 @@
       // If sign-in is known to fail and we're still on the sign-in form, switch over.
       if (signInBtn && SS.get("signInFailed") && createLink) {
         await this._realClick(createLink);
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, 3000)); // wait for create form
         return;
       }
 
-      // Create Account form: attempt once per session.
+      // Create Account form: wait for all fields to be filled, then submit.
       if (createBtn && !SS.get("createDone") &&
           emailEl?.value && pwEl?.value && verifyEl?.value &&
           (!consentBox || consentBox.checked)) {
-        SS.set("createDone", "1");
-        await new Promise((r) => setTimeout(r, 600));
+        // Extra pause: let React finish processing the filled values.
+        await new Promise((r) => setTimeout(r, 2000));
         try { document.activeElement?.blur?.(); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 1000)); // blur settle
+        SS.set("createDone", "1");
         document.documentElement.setAttribute("data-autoapply-auth", "submit:create");
         const r = await this._submitAndWait(createBtn, {
           successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
           errorSel: '[data-automation-id="errorMessage"]',
-          timeoutMs: 12000
+          timeoutMs: 15000
         });
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
         if (r !== "success") {
@@ -283,7 +292,7 @@
       window.__autoApplyWorkdayDriver = true;
       const startedAt = Date.now();
       const BUDGET_MS = 10 * 60 * 1000;
-      const TICK_MS = 700;
+      const TICK_MS = 2000;
       let inflight = false;
       const tick = async () => {
         if (Date.now() - startedAt > BUDGET_MS) {
