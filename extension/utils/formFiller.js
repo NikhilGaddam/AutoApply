@@ -16,9 +16,16 @@
 
   function fillInput(el, value) {
     if (el == null || value == null || value === "") return false;
+    // Focus the field first so React marks it as "touched/active". Without
+    // this, Workday's password inputs silently reject programmatic value changes.
+    try { el.focus(); } catch (_) {}
+    try {
+      el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "a", keyCode: 65 }));
+    } catch (_) {}
     setNativeValue(el, String(value));
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    try { el.blur(); } catch (_) {}
     return true;
   }
 
