@@ -251,7 +251,7 @@
         document.documentElement.setAttribute("data-autoapply-auth", "submit:create");
         const r = await this._submitAndWait(createBtn, {
           successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
-          errorSel: '[data-automation-id="errorMessage"]',
+          errorSel: '[data-automation-id="errorMessage"], [data-automation-id="password"][aria-invalid="true"], [data-automation-id="verifyPassword"][aria-invalid="true"]',
           timeoutMs: 15000
         });
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
@@ -399,7 +399,10 @@
             const errs = document.querySelectorAll(errorSel);
             if (errs.length) {
               const txt = Array.from(errs).map((e) => (e.innerText || "").trim()).join(" | ");
-              if (txt) return "error";
+              // Return "error" if there's visible error text OR if any matching
+              // element is an input (aria-invalid inputs have no innerText but
+              // still signal a validation failure).
+              if (txt || Array.from(errs).some(e => e.tagName === "INPUT")) return "error";
             }
           }
         }
