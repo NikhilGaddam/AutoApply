@@ -6,13 +6,11 @@ async function getGmailToken(interactive = true) {
   const CLIENT_ID = '969122121042-8vrekp0o4g4gr4edsm5dbieik0aottt6.apps.googleusercontent.com';
   const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
   const scope = 'https://www.googleapis.com/auth/gmail.readonly';
-  const nonce = Math.random().toString(36).substring(2);
   const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth' +
     `?client_id=${encodeURIComponent(CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&response_type=token` +
-    `&scope=${encodeURIComponent(scope)}` +
-    `&nonce=${nonce}`;
+    `&scope=${encodeURIComponent(scope)}`;
   return new Promise((resolve, reject) => {
     chrome.identity.launchWebAuthFlow({ url: authUrl, interactive }, (responseUrl) => {
       if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
