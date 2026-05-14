@@ -163,7 +163,13 @@
       // 3. Fill all currently-visible fields via the standard pipeline.
       const result = await super.fill();
 
-      // 3b. Workday's Country / State / Phone Type are custom button-widgets.
+      // 3b. Password inputs in Workday are React-controlled with an
+      // own-property tracker that isn't callable from an isolated content
+      // script. Re-fill them via the background's chrome.scripting
+      // (world: "MAIN") so direct assignment goes through React's tracker.
+      await this._fillPasswordsMainWorld();
+
+      // 3c. Workday's Country / State / Phone Type are custom button-widgets.
       await this._fillWorkdayDropdowns();
 
       // 4. Auth gate ─ auto-submit Sign In or Create Account.
@@ -539,6 +545,36 @@
       await this._realClick(match);
       await new Promise((r) => setTimeout(r, 250));
       return true;
+    }
+
+    // Fill Workday's React-controlled password inputs via chrome.scripting
+    // (world: "MAIN") because their own-property React tracker is not
+    // callable from an extension isolated world.
+    async _fillPasswordsMainWorld() {
+      const { fillInputMainWorld } = AutoApply.FormFiller;
+      const p = this.profile || {};
+      const acct = p.account || {};
+      const createFormVisible = !!document.querySelector('[data-automation-id="verifyPassword"]');
+      const pwValue = createFormVisible
+        ? (acct.passwordCreate || acct.password || "")
+        : (acct.password || "");
+
+      const fills = [
+        { sel: '[data-automation-id="password"]', val: pwValue },
+        ...(createFormVisible
+          ? [{ sel: '[data-automation-id="verifyPassword"]', val: acct.passwordCreate || acct.password || "" }]
+          : [])
+      ];
+
+      for (const { sel, val } of fills) {
+        if (!val) continue;
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        if (el.value === val) continue; // already correct
+        await fillInputMainWorld(el, val);
+        // Short pause so React processes the change event before next fill.
+        await new Promise((r) => setTimeout(r, 150));
+      }
     }
 
     async _fillWorkdayDropdowns() {

@@ -41,6 +41,24 @@
     return fillInput(el, value);
   }
 
+  // Fill a field via the background service worker's chrome.scripting.executeScript
+  // (world: "MAIN"). Necessary for React-controlled password inputs where the
+  // own-property tracker is not callable from an isolated content-script world.
+  // Returns a Promise<boolean>.
+  function fillInputMainWorld(el, value) {
+    const autoId = el && el.getAttribute && el.getAttribute("data-automation-id");
+    if (!autoId) return Promise.resolve(fillInput(el, value));
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "fillFieldMainWorld", selector: `[data-automation-id="${autoId}"]`, value: String(value) },
+        (resp) => {
+          if (chrome.runtime.lastError) { resolve(false); return; }
+          resolve(!!(resp && resp.ok));
+        }
+      );
+    });
+  }
+
   // Synonyms for option matching when the page uses different vocabulary than
   // the profile (e.g. Tesla EEO uses "Male"/"Female" while the profile stores
   // "Man"/"Woman", or "I am not a protected veteran" vs "I am not a veteran").
@@ -156,5 +174,5 @@
     return ["select", "textarea"].includes(tag) || el.isContentEditable;
   }
 
-  ns.FormFiller = { fillField, isFillable, setNativeValue };
+  ns.FormFiller = { fillField, isFillable, setNativeValue, fillInputMainWorld };
 })(typeof window !== "undefined" ? window : globalThis);

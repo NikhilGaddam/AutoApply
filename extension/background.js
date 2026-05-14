@@ -1,4 +1,32 @@
 // Background service worker. On first install, seed the default profile.
+
+// Fill an input in the page's MAIN world (bypasses isolated-world React
+// tracker issues). Content scripts send this message when the normal
+// isolated-world fill doesn't notify React's own-property tracker.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "fillFieldMainWorld" && sender.tab?.id) {
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      world: "MAIN",
+      func: (selector, value) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        el.focus();
+        // Use the own-property setter (React's tracker) via direct assignment.
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.blur();
+        return el.value === value;
+      },
+      args: [msg.selector, msg.value]
+    })
+      .then(results => sendResponse({ ok: true, result: results?.[0]?.result }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true; // keep channel open for async response
+  }
+});
+
 chrome.runtime.onInstalled.addListener(async () => {
   try {
     const stored = await chrome.storage.sync.get("autoapply.profile");
