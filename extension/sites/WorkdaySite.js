@@ -266,12 +266,14 @@
       }
 
       // If create succeeded but we're back on the create form it means Workday
-      // requires email verification before the session can proceed. Log once.
+      // requires email verification before the session can proceed. Log once
+      // and PAUSE the driver — no point hammering the form.
       if (createBtn && SS.get("createDone") && !SS.get("verifyNotified")) {
         SS.set("verifyNotified", "1");
         const usedEmail = SS.get("createEmail") || document.documentElement.getAttribute("data-autoapply-create-email") || "unknown";
-        console.warn(`AutoApply: Workday requires email verification. Check Gmail for ${usedEmail} then click the link and refresh.`);
+        console.warn(`AutoApply: Workday requires email verification. Check Gmail for ${usedEmail} then click the link and click Resume in the extension popup.`);
         document.documentElement.setAttribute("data-autoapply-auth", "waiting:email-verify");
+        window.__autoApplyWorkdayPaused = true; // stop the loop until user resumes
       }
 
       // Refresh overlay marks after a tick.
@@ -316,7 +318,7 @@
           window.__autoApplyWorkdayDriver = false;
           return;
         }
-        if (!inflight) {
+        if (!inflight && !window.__autoApplyWorkdayPaused) {
           inflight = true;
           try {
             // Use a fresh instance each tick so customMappings() re-runs

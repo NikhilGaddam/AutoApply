@@ -7,3 +7,19 @@ button { display: block; width: 100%; margin: 6px 0; padding: 8px 10px; border-r
 .secondary { background: #e5e7eb; color: #111827; }
 .link { background: transparent; color: #2563eb; text-decoration: underline; }
 .status { margin-top: 10px; font-size: 12px; color: #374151; min-height: 16px; }
+
+/* Workday status panel */
+.wd-panel { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.wd-panel.hidden { display: none; }
+.status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 500; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.dot-gray   { background: #9ca3af; }
+.dot-blue   { background: #3b82f6; animation: pulse 1.2s ease-in-out infinite; }
+.dot-green  { background: #22c55e; }
+.dot-yellow { background: #f59e0b; }
+.dot-red    { background: #ef4444; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+.verify-notice { font-size: 11px; color: #92400e; background: #fef3c7; border-radius: 5px;
+                 padding: 6px 8px; margin-bottom: 8px; line-height: 1.5; }
+.verify-notice.hidden { display: none; }
+.pause-btn { margin: 4px 0 0 0; padding: 6px 10px; font-size: 12px; }

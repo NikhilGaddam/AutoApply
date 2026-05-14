@@ -92,6 +92,48 @@
       sendResponse({ ok: true });
       return true;
     }
+    if (msg.type === "autoapply.status") {
+      const d = document.documentElement;
+      const ss = {};
+      try {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith("aa_")) ss[k] = sessionStorage.getItem(k);
+        }
+      } catch (_) {}
+      const tickRaw = d.getAttribute("data-autoapply-tick");
+      sendResponse({
+        ok: true,
+        step: d.getAttribute("data-autoapply-step") || null,
+        authState: d.getAttribute("data-autoapply-auth") || null,
+        tickAge: tickRaw ? Date.now() - parseInt(tickRaw, 10) : null,
+        paused: !!window.__autoApplyWorkdayPaused,
+        isWorkday: /\.myworkdayjobs\.com$|\.workday\.com$/.test(window.location.hostname),
+        ss
+      });
+      return true;
+    }
+    if (msg.type === "autoapply.pause") {
+      window.__autoApplyWorkdayPaused = true;
+      document.documentElement.setAttribute("data-autoapply-auth",
+        document.documentElement.getAttribute("data-autoapply-auth") + ":paused");
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (msg.type === "autoapply.resume") {
+      window.__autoApplyWorkdayPaused = false;
+      // Restart the driver if the budget-kill stopped it.
+      if (!window.__autoApplyWorkdayDriver) {
+        loadProfile().then((profile) => {
+          const url = new URL(window.location.href);
+          const Handler = ns.SiteRegistry.pickHandler(url);
+          const site = new Handler(profile);
+          site._ensureDriver();
+        });
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
   });
 
   // Auto-detect: only run automatically if the page looks like an application form.
