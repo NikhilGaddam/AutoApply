@@ -230,8 +230,11 @@
         return;
       }
 
-      // If sign-in is known to fail and we're still on the sign-in form, switch over.
-      if (signInBtn && SS.get("signInFailed") && createLink) {
+      // If sign-in is known to fail AND account not yet created, switch to create form.
+      // Guard: don't click createLink if createDone is already set — that would
+      // re-open the create form when Workday is actually showing the email-verify
+      // confirmation page (which also has signInBtn + createLink but no email input).
+      if (signInBtn && SS.get("signInFailed") && createLink && !SS.get("createDone")) {
         console.log("AutoApply: sign-in known failed, clicking createAccountLink");
         await this._realClick(createLink);
         await new Promise((r) => setTimeout(r, 3000)); // wait for create form
@@ -255,20 +258,22 @@
           timeoutMs: 15000
         });
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
-        if (r !== "success") {
-          SS.del("createDone");
-        } else {
+        if (r === "success") {
           const usedEmail = emailEl?.value || "";
           SS.set("createEmail", usedEmail);
           document.documentElement.setAttribute("data-autoapply-create-email", usedEmail);
         }
+        // On error OR timeout: keep createDone set so we don't retry creation.
+        // The email-verify wall check below will fire on the next tick and pause.
         return;
       }
 
-      // If create succeeded but we're back on the create form it means Workday
-      // requires email verification before the session can proceed. Log once
-      // and PAUSE the driver — no point hammering the form.
-      if (createBtn && SS.get("createDone") && !SS.get("verifyNotified")) {
+      // Email-verify wall: fired when createDone is set (create was submitted or
+      // account already exists) AND sign-in is known to fail. At this point the
+      // user MUST verify their email before Workday will allow sign-in.
+      // Does NOT require createBtn visible — Workday's confirmation page has
+      // signInBtn + createLink but no email input or create form.
+      if (SS.get("createDone") && SS.get("signInFailed") && !SS.get("verifyNotified")) {
         SS.set("verifyNotified", "1");
         const usedEmail = SS.get("createEmail") || document.documentElement.getAttribute("data-autoapply-create-email") || "unknown";
         console.warn(`AutoApply: Workday requires email verification. Check Gmail for ${usedEmail} then click the link and click Resume in the extension popup.`);

@@ -49,9 +49,14 @@
     const autoId = el && el.getAttribute && el.getAttribute("data-automation-id");
     if (!autoId) return Promise.resolve(fillInput(el, value));
     return new Promise((resolve) => {
+      // 3-second safety timeout: if the background service worker doesn't
+      // respond (e.g. it was killed and is waking up), resolve false instead
+      // of hanging the inflight lock forever.
+      const bail = setTimeout(() => resolve(false), 3000);
       chrome.runtime.sendMessage(
         { type: "fillFieldMainWorld", selector: `[data-automation-id="${autoId}"]`, value: String(value) },
         (resp) => {
+          clearTimeout(bail);
           if (chrome.runtime.lastError) { resolve(false); return; }
           resolve(!!(resp && resp.ok));
         }
