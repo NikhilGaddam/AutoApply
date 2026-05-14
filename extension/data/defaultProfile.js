@@ -25,8 +25,7 @@
     // inbox still receives all Workday emails.
     account: {
       email: "ngaddam.dev@gmail.com",
-      password: "AutoApply@2026",
-      passwordCreate: "AutoApply@2026"
+      password: "Nikhil@3115"
     },
 
     address: {

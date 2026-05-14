@@ -181,11 +181,22 @@
         await new Promise((r) => setTimeout(r, 600));
         try { document.activeElement?.blur?.(); } catch (_) {}
         document.documentElement.setAttribute("data-autoapply-auth", "submit:signin");
-        const r = await this._submitAndWait(signInBtn, {
+        let r = await this._submitAndWait(signInBtn, {
           successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
           errorSel: '[data-automation-id="errorMessage"]',
           timeoutMs: 8000
         });
+        // Workday redirects to /login even on wrong credentials, so a URL change
+        // alone is not a real sign-in success. Wait for any pending redirect to
+        // settle, then verify we actually landed on the application form.
+        if (r === "success") {
+          await new Promise((res) => setTimeout(res, 1500));
+          const onAppForm = !!(
+            document.querySelector('[data-automation-id="pageFooterNextButton"]') ||
+            document.querySelector('[data-automation-id="legalNameSection_firstName"]')
+          );
+          if (!onAppForm) r = "error";
+        }
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
         if (r !== "success") {
           SS.set("signInFailed", "1");
