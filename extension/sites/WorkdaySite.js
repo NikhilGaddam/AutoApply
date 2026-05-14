@@ -36,33 +36,15 @@
       // ----- Sign In / Create Account (step 1) -----
       byAuto("email", "account.email");
       byAuto("password", "account.password");
-      // For Create Account, use the create-specific alias + a unique suffix so
-      // repeated attempts (e.g. after Workday rejects "email already exists")
-      // each use a fresh email address.
-      const acct = (this.profile || {}).account || {};
+      // For Create Account form, map email/password/verify fields directly.
       const createFormVisible = !!document.querySelector('[data-automation-id="verifyPassword"]');
-      if (createFormVisible && (acct.emailCreate || acct.email)) {
-        const baseEmail = acct.emailCreate || acct.email;
-        let attempts = 0;
-        try { attempts = parseInt(sessionStorage.getItem("aa_createAttempts") || "0"); } catch (_) {}
-        // Build alias: strip any existing + tag then add our own.
-        // Start at wd4 since wd1/wd2/wd3 were used in prior sessions.
-        const [user, domain] = baseEmail.split("@");
-        const cleanUser = user.replace(/\+[^+]*$/, "");
-        const n = attempts + 4;
-        const createEmail = `${cleanUser}+wd${n}@${domain}`;
+      if (createFormVisible) {
         const emailEl2 = document.querySelector('[data-automation-id="email"]');
         const pwEl2 = document.querySelector('[data-automation-id="password"]');
         const verifyEl = document.querySelector('[data-automation-id="verifyPassword"]');
-        if (emailEl2) map.set(emailEl2, "account.emailCreate");
+        if (emailEl2) map.set(emailEl2, "account.email");
         if (pwEl2) map.set(pwEl2, "account.passwordCreate");
         if (verifyEl) map.set(verifyEl, "account.passwordCreate");
-        // Store the computed email in profile so fillField can write it.
-        // Also persist in sessionStorage so the verify-notification can use it.
-        if (this.profile?.account) {
-          this.profile.account.emailCreate = createEmail;
-          try { sessionStorage.setItem("aa_createEmail", createEmail); } catch (_) {}
-        }
       }
       byAuto("verifyPassword", "account.passwordCreate");
       // ----- My Information (step 2) -----
@@ -186,8 +168,6 @@
       //   aa_signInFailed  – "1" after sign-in returns error; skip future
       //                       sign-in attempts and go to Create Account.
       //   aa_createDone    – "1" after create-account submit fires.
-      //   aa_createEmail   – the email we used for create, for diagnostics.
-      //   aa_createAttempts– integer; bump when a create email already exists.
       const signInBtn  = document.querySelector('[data-automation-id="signInSubmitButton"]');
       const createBtn  = document.querySelector('[data-automation-id="createAccountSubmitButton"]');
       const createLink = document.querySelector('[data-automation-id="createAccountLink"]');
@@ -196,14 +176,7 @@
       const verifyEl   = document.querySelector('[data-automation-id="verifyPassword"]');
       const consentBox = document.querySelector('[data-automation-id="createAccountCheckbox"]');
 
-      // If we see sign-in form and it's known to fail, switch to Create Account.
-      if (signInBtn && SS.get("signInFailed") && createLink) {
-        await this._realClick(createLink);
-        await new Promise((r) => setTimeout(r, 1000));
-        return;
-      }
-
-      // Sign-in form: attempt once per session.
+      // Sign-in form: try once per session; on failure wait 2s then switch to Create Account.
       if (signInBtn && !SS.get("signInFailed") && emailEl?.value && pwEl?.value) {
         await new Promise((r) => setTimeout(r, 600));
         try { document.activeElement?.blur?.(); } catch (_) {}
@@ -216,10 +189,18 @@
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
         if (r !== "success") {
           SS.set("signInFailed", "1");
-          // Immediately switch to Create Account if the link is visible.
+          // Wait 2s then switch to Create Account.
+          await new Promise((res) => setTimeout(res, 2000));
           const cl2 = document.querySelector('[data-automation-id="createAccountLink"]');
-          if (cl2) { await this._realClick(cl2); await new Promise((r2) => setTimeout(r2, 1000)); }
+          if (cl2) { await this._realClick(cl2); await new Promise((res) => setTimeout(res, 1000)); }
         }
+        return;
+      }
+
+      // If sign-in is known to fail and we're still on the sign-in form, switch over.
+      if (signInBtn && SS.get("signInFailed") && createLink) {
+        await this._realClick(createLink);
+        await new Promise((r) => setTimeout(r, 1000));
         return;
       }
 
@@ -238,22 +219,21 @@
         });
         document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
         if (r !== "success") {
-          // Create failed (email already exists) — retry with a fresh alias.
           SS.del("createDone");
-          SS.set("createAttempts", String((parseInt(SS.get("createAttempts") || "0")) + 1));
         } else {
-          SS.set("createEmail", emailEl?.value || "");
-          document.documentElement.setAttribute("data-autoapply-create-email", emailEl?.value || "");
+          const usedEmail = emailEl?.value || "";
+          SS.set("createEmail", usedEmail);
+          document.documentElement.setAttribute("data-autoapply-create-email", usedEmail);
         }
         return;
       }
 
       // If create succeeded but we're back on the create form it means Workday
-      // requires email verification before letting the session proceed. Log once.
+      // requires email verification before the session can proceed. Log once.
       if (createBtn && SS.get("createDone") && !SS.get("verifyNotified")) {
         SS.set("verifyNotified", "1");
-        const createdEmail = SS.get("createEmail") || document.documentElement.getAttribute("data-autoapply-create-email") || "a +wdN address";
-        console.warn(`AutoApply: Workday requires email verification. Check Gmail for ${createdEmail} then click the link and refresh.`);
+        const usedEmail = SS.get("createEmail") || document.documentElement.getAttribute("data-autoapply-create-email") || "unknown";
+        console.warn(`AutoApply: Workday requires email verification. Check Gmail for ${usedEmail} then click the link and refresh.`);
         document.documentElement.setAttribute("data-autoapply-auth", "waiting:email-verify");
       }
 
