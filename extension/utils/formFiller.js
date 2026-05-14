@@ -4,11 +4,19 @@
   const ns = (root.AutoApply = root.AutoApply || {});
 
   function setNativeValue(el, value) {
-    const proto = Object.getPrototypeOf(el);
-    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-    const valueSetter = Object.getOwnPropertyDescriptor(el, "value")?.set;
-    if (valueSetter && setter && valueSetter !== setter) {
-      setter.call(el, value);
+    // From an extension isolated world, calling the prototype setter (the
+    // original React interop trick) bypasses React's own-property tracker
+    // and React never sees the change. Instead, call the own-property setter
+    // directly (React's tracker closure) — Chrome allows cross-world calls
+    // on DOM element own-property setters. Fall back to direct assignment if
+    // the own setter is cross-world inaccessible.
+    const ownSetter = Object.getOwnPropertyDescriptor(el, "value")?.set;
+    const protoSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")?.set;
+    if (ownSetter && protoSetter && ownSetter !== protoSetter) {
+      // React tracker is present. Call native (proto) setter first to set the
+      // underlying C++ value, then React's tracker to update internal state.
+      try { protoSetter.call(el, value); } catch (_) {}
+      try { ownSetter.call(el, value); } catch (_) { el.value = value; }
     } else {
       el.value = value;
     }
