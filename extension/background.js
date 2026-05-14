@@ -105,6 +105,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Fill a Greenhouse react-select combobox by calling selectOption directly
+  // on the React fiber instance (main world only — isolated world cannot call
+  // main-world React methods or dispatch trusted events).
+  if (msg.type === "ghSelectOption" && sender.tab?.id) {
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      world: "MAIN",
+      func: (inputId, targets) => {
+        function getSelectInstance(el) {
+          const container = el?.closest('[class*="container--"], [class*="select__container"]');
+          if (!container) return null;
+          const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
+          if (!fiberKey) return null;
+          const queue = [container[fiberKey]];
+          const visited = new Set();
+          while (queue.length) {
+            const node = queue.shift();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            if (node.stateNode && typeof node.stateNode?.selectOption === 'function') return node.stateNode;
+            if (node.child) queue.push(node.child);
+            if (node.sibling) queue.push(node.sibling);
+          }
+          return null;
+        }
+        const el = document.getElementById(inputId);
+        if (!el) return false;
+        const inst = getSelectInstance(el);
+        if (!inst) return false;
+        const options = inst.props?.options || [];
+        for (const target of targets) {
+          let opt = options.find(o => (o.label || '').toLowerCase().trim() === target);
+          if (!opt && target.length >= 3) {
+            opt = options.find(o => {
+              const l = (o.label || '').toLowerCase().trim();
+              return l && (l.includes(target) || target.includes(l));
+            });
+          }
+          if (opt) { inst.selectOption(opt); return true; }
+        }
+        return false;
+      },
+      args: [msg.inputId, msg.targets]
+    })
+      .then(results => sendResponse({ ok: results?.[0]?.result === true }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   if (msg.type === "fillFieldMainWorld" && sender.tab?.id) {
     chrome.scripting.executeScript({
       target: { tabId: sender.tab.id },

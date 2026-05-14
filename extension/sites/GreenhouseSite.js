@@ -53,58 +53,28 @@
     }
 
     /**
-     * Fill a Greenhouse react-select combobox using keyboard navigation.
-     * Focuses the input, presses ArrowDown to open the menu, navigates
-     * to the matching option with ArrowDown, then confirms with Enter.
-     * This avoids isTrusted issues with programmatic click events.
+     * Fill a Greenhouse react-select combobox by calling selectOption() directly
+     * on the React fiber component instance. Runs via chrome.scripting.executeScript
+     * (world: MAIN) because the isolated content-script world cannot dispatch
+     * trusted events or call React methods defined in the page context.
      */
     async _fillGhCombo(el, value) {
-      if (!el || value == null || value === "") return false;
+      if (!el || value == null || value === "" || !el.id) return false;
       const { FormFiller } = ns;
 
       const targets = (FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
-      const isMatch = (text) => {
-        const t = (text || "").toLowerCase().trim();
-        for (const target of targets) {
-          if (t === target) return true;
-          if (target.length >= 3 && (t.includes(target) || target.includes(t))) return true;
-        }
-        return false;
-      };
 
-      const dispatchKey = (key, keyCode) => el.dispatchEvent(
-        new KeyboardEvent("keydown", { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true })
-      );
-
-      try { el.focus(); } catch (_) {}
-      await new Promise(r => setTimeout(r, 100));
-
-      // ArrowDown opens the menu and focuses the first option
-      dispatchKey("ArrowDown", 40);
-
-      // Wait for menu to appear (up to 2s)
-      let menu = null;
-      for (let i = 0; i < 20; i++) {
-        menu = document.querySelector("[class*='select__menu']");
-        if (menu) break;
-        await new Promise(r => setTimeout(r, 100));
-      }
-      if (!menu) return false;
-
-      // Navigate options with ArrowDown until target is focused, then Enter
-      for (let i = 0; i < 10; i++) {
-        const focused = menu.querySelector("[class*='select__option--is-focused'], [class*='option--is-focused']");
-        if (focused && isMatch(focused.textContent)) {
-          dispatchKey("Enter", 13);
-          await new Promise(r => setTimeout(r, 100));
-          return true;
-        }
-        dispatchKey("ArrowDown", 40);
-        await new Promise(r => setTimeout(r, 80));
-      }
-
-      dispatchKey("Escape", 27);
-      return false;
+      return new Promise(resolve => {
+        const bail = setTimeout(() => resolve(false), 3000);
+        chrome.runtime.sendMessage(
+          { type: "ghSelectOption", inputId: el.id, targets },
+          resp => {
+            clearTimeout(bail);
+            if (chrome.runtime.lastError) { resolve(false); return; }
+            resolve(!!(resp?.ok));
+          }
+        );
+      });
     }
   }
 
