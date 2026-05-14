@@ -1,9 +1,96 @@
 // Background service worker. On first install, seed the default profile.
 
+// ── Gmail helper ────────────────────────────────────────────────────────────
+
+async function getGmailToken(interactive = true) {
+  return new Promise((resolve, reject) => {
+    chrome.identity.getAuthToken({ interactive }, (token) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(token);
+    });
+  });
+}
+
+function gmailGet(token, path) {
+  return fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  }).then(r => r.json());
+}
+
+// Decode a Gmail base64url payload part to a plain string.
+function decodeGmailBody(data) {
+  try {
+    return atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+  } catch (_) { return ""; }
+}
+
+// Walk Gmail message payload parts depth-first; return the first text matching mime.
+function extractPart(payload, mime) {
+  if (!payload) return "";
+  if (payload.mimeType === mime && payload.body?.data) return decodeGmailBody(payload.body.data);
+  for (const part of payload.parts || []) {
+    const found = extractPart(part, mime);
+    if (found) return found;
+  }
+  return "";
+}
+
+// Extract the first https URL that looks like a Workday verify/activate link.
+function extractWorkdayLink(text) {
+  const re = /https?:\/\/[^\s"'<>)]+(?:verify|activate|confirm|token)[^\s"'<>)]+/gi;
+  const matches = text.match(re);
+  return matches ? matches[0].replace(/&amp;/g, "&") : null;
+}
+
+async function fetchRecentEmails(count = 5) {
+  const token = await getGmailToken(true);
+  const list = await gmailGet(token, `/messages?maxResults=${count}&labelIds=INBOX`);
+  if (!list.messages) return [];
+
+  const emails = await Promise.all(list.messages.map(async (m) => {
+    const msg = await gmailGet(token, `/messages/${m.id}?format=full`);
+    const hdrs = msg.payload?.headers || [];
+    const hdr = (name) => hdrs.find(h => h.name.toLowerCase() === name)?.value || "";
+
+    const htmlBody = extractPart(msg.payload, "text/html");
+    const textBody = extractPart(msg.payload, "text/plain");
+    const body = htmlBody || textBody;
+    const verifyLink = extractWorkdayLink(body);
+
+    return {
+      id: m.id,
+      from: hdr("from"),
+      subject: hdr("subject"),
+      date: hdr("date"),
+      snippet: (msg.snippet || "").slice(0, 120),
+      verifyLink      // null unless this email contains a Workday verify URL
+    };
+  }));
+
+  return emails;
+}
+
+// ── Message handlers ─────────────────────────────────────────────────────────
+
 // Fill an input in the page's MAIN world (bypasses isolated-world React
 // tracker issues). Content scripts send this message when the normal
 // isolated-world fill doesn't notify React's own-property tracker.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "gmail.fetchRecent") {
+    fetchRecentEmails(msg.count || 5)
+      .then(emails => sendResponse({ ok: true, emails }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.type === "gmail.signOut") {
+    getGmailToken(false)
+      .then(token => new Promise((res) => chrome.identity.removeCachedAuthToken({ token }, res)))
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (msg.type === "fillFieldMainWorld" && sender.tab?.id) {
     chrome.scripting.executeScript({
       target: { tabId: sender.tab.id },

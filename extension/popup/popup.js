@@ -90,4 +90,69 @@ function humanStatus(s) {
   document.getElementById("options").addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
+
+  // ── Gmail section ─────────────────────────────────────────────────────────
+  const gmailFetchBtn = document.getElementById("gmail-fetch");
+  const gmailStatus   = document.getElementById("gmail-status");
+  const gmailList     = document.getElementById("gmail-list");
+
+  function renderEmails(emails) {
+    gmailList.innerHTML = "";
+    if (!emails.length) { gmailStatus.textContent = "No messages found."; return; }
+    gmailStatus.textContent = `Last ${emails.length} messages:`;
+
+    for (const e of emails) {
+      const li = document.createElement("li");
+      if (e.verifyLink) li.className = "verify-email";
+
+      const fromEl = document.createElement("div");
+      fromEl.className = "email-from";
+      fromEl.textContent = e.from;
+
+      const subEl = document.createElement("div");
+      subEl.className = "email-subject";
+      subEl.textContent = e.subject || "(no subject)";
+
+      const snipEl = document.createElement("div");
+      snipEl.className = "email-snippet";
+      snipEl.textContent = e.snippet;
+
+      li.append(fromEl, subEl, snipEl);
+
+      if (e.verifyLink) {
+        const btn = document.createElement("button");
+        btn.className = "verify-link-btn";
+        btn.textContent = "✓ Open verification link";
+        btn.addEventListener("click", () => {
+          chrome.tabs.update(tab.id, { url: e.verifyLink });
+          window.close();
+        });
+        li.appendChild(btn);
+      }
+
+      gmailList.appendChild(li);
+    }
+  }
+
+  gmailFetchBtn.addEventListener("click", async () => {
+    gmailFetchBtn.disabled = true;
+    gmailFetchBtn.textContent = "Loading…";
+    gmailStatus.textContent = "Connecting to Gmail…";
+    gmailList.innerHTML = "";
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "gmail.fetchRecent", count: 5 });
+      if (res?.ok) {
+        renderEmails(res.emails);
+        gmailFetchBtn.textContent = "Refresh";
+      } else {
+        gmailStatus.textContent = res?.error || "Failed to fetch emails.";
+        gmailFetchBtn.textContent = "Check inbox";
+      }
+    } catch (e) {
+      gmailStatus.textContent = String(e);
+      gmailFetchBtn.textContent = "Check inbox";
+    } finally {
+      gmailFetchBtn.disabled = false;
+    }
+  });
 })();
