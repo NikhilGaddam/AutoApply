@@ -46,6 +46,7 @@
 
     { key: "previouslyEmployed", patterns: [/\bpreviously[\s_-]*employed\b/, /\bever[\s_-]*(been[\s_-]*)?(employed|worked)[\s_-]*(by|at|for)\b/, /\bworked[\s_-]*(here|with[\s_-]*us)\b/] },
     { key: "referredByEmployee", patterns: [/\breferred[\s_-]*by\b/, /\bemployee[\s_-]*referral\b/] },
+    { key: "relativesAtCompany", patterns: [/\brelatives\b/, /\bfamily members?\b.*\bwork\b/, /\bdo you have relatives\b/] },
     { key: "over18",             patterns: [/\bover[\s_-]*18\b/, /\b18[\s_-]*years[\s_-]*or[\s_-]*older\b/] }
   ];
 

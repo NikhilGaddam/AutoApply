@@ -71,6 +71,7 @@
     [/^man$/i, ["male"]],
     [/^woman$/i, ["female"]],
     [/^non-?binary$/i, ["non-binary", "nonbinary", "non binary"]],
+    [/^not hispanic or latino$/i, ["no"]],
     [/^i am not a veteran$/i, ["i am not a protected veteran", "not a veteran", "non-veteran", "no"]],
     [/^i am a veteran$/i, ["i identify as one or more of the classifications of protected veterans", "yes"]],
     [/^no,? i do not have a disability$/i, ["no", "no, i do not have a disability", "no disability"]],
@@ -179,5 +180,5 @@
     return ["select", "textarea"].includes(tag) || el.isContentEditable;
   }
 
-  ns.FormFiller = { fillField, isFillable, setNativeValue, fillInputMainWorld };
+  ns.FormFiller = { fillField, isFillable, setNativeValue, fillInputMainWorld, expandSynonyms };
 })(typeof window !== "undefined" ? window : globalThis);

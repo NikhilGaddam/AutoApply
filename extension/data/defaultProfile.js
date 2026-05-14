@@ -77,6 +77,7 @@
     // Common employer screening questions
     previouslyEmployed: "No",
     referredByEmployee: "No",
+    relativesAtCompany: "No",
     over18: "Yes",
 
     education: [
