@@ -74,3 +74,15 @@
   color: #fde68a;
 }
 .autoapply-toast .autoapply-unmapped-list li:hover { background: #1f2937; }
+
+/* Workday live status bar inside toast */
+.autoapply-wd-bar { margin: 8px 0 10px; }
+.wd-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wd-badge { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 12px; }
+.wd-badge-info { background: #1d4ed8; color: #bfdbfe; }
+.wd-badge-ok   { background: #15803d; color: #bbf7d0; }
+.wd-badge-warn { background: #b45309; color: #fde68a; }
+.wd-pause-btn  { font: 12px inherit; padding: 4px 10px; border-radius: 6px;
+                 background: #374151; color: #e5e7eb; border: 0; cursor: pointer; }
+.wd-pause-btn:hover { background: #4b5563; }
+.wd-hint { margin-top: 6px; font-size: 11px; color: #fde68a; line-height: 1.4; }

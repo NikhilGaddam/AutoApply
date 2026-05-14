@@ -108,17 +108,65 @@
       });
     }
 
-    toast.querySelector(".autoapply-close").addEventListener("click", () => toast.remove());
+    // ── Workday live status + Pause/Resume ────────────────────────────────
+    const isWorkday = /\.myworkdayjobs\.com$|\.workday\.com$/.test(window.location.hostname);
+    let statusInterval = null;
+    if (isWorkday) {
+      const statusBar = document.createElement("div");
+      statusBar.className = "autoapply-wd-bar";
+
+      function refreshStatus() {
+        const auth = document.documentElement.getAttribute("data-autoapply-auth") || "";
+        const paused = !!window.__autoApplyWorkdayPaused;
+        let icon, label, cls, hint = "";
+        if (paused && auth.includes("email-verify")) {
+          icon = "⏸"; label = "Waiting: verify email"; cls = "warn";
+          hint = "Check your inbox and click the Workday link, then Resume.";
+        } else if (paused) {
+          icon = "⏸"; label = "Paused"; cls = "warn";
+        } else if (auth.includes("submit:signin")) {
+          icon = "⟳"; label = "Signing in…"; cls = "info";
+        } else if (auth.includes("submit:create")) {
+          icon = "⟳"; label = "Creating account…"; cls = "info";
+        } else if (auth.includes("email-verify")) {
+          icon = "⏸"; label = "Waiting: verify email"; cls = "warn";
+          hint = "Check your inbox and click the Workday link, then Resume.";
+        } else if (auth.includes("result:success")) {
+          icon = "✓"; label = "Signed in"; cls = "ok";
+        } else {
+          icon = "⟳"; label = "Running…"; cls = "info";
+        }
+        statusBar.innerHTML = `
+          <div class="wd-status-row">
+            <span class="wd-badge wd-badge-${cls}">${icon} ${label}</span>
+            <button class="wd-pause-btn">${paused ? "▶ Resume" : "⏸ Pause"}</button>
+          </div>
+          ${hint ? `<div class="wd-hint">${hint}</div>` : ""}
+        `;
+        statusBar.querySelector(".wd-pause-btn").addEventListener("click", () => {
+          window.__autoApplyWorkdayPaused = !window.__autoApplyWorkdayPaused;
+          refreshStatus();
+        });
+      }
+
+      refreshStatus();
+      statusInterval = setInterval(refreshStatus, 2000);
+      toast.querySelector(".autoapply-actions").before(statusBar);
+    }
+
+    function cleanup() { if (statusInterval) clearInterval(statusInterval); }
+
+    toast.querySelector(".autoapply-close").addEventListener("click", () => { cleanup(); toast.remove(); });
     toast.querySelector(".autoapply-primary").addEventListener("click", () => {
-      toast.remove();
+      cleanup(); toast.remove();
       onSubmit?.();
     });
     toast.querySelector(".autoapply-secondary").addEventListener("click", () => {
-      toast.remove();
+      cleanup(); toast.remove();
       onCancel?.("rescan");
     });
     toast.querySelector(".autoapply-danger").addEventListener("click", () => {
-      clearMarks();
+      cleanup(); clearMarks();
       toast.remove();
     });
 
