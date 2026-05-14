@@ -12,11 +12,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const el = document.querySelector(selector);
         if (!el) return false;
         el.focus();
-        // Use the own-property setter (React's tracker) via direct assignment.
+        // Direct assignment calls React's own-property tracker (the correct
+        // setter in page world). Do NOT blur — blur triggers React's
+        // cross-field password-match validation before the other field is set,
+        // which can clear this field.
         el.value = value;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        el.blur();
         return el.value === value;
       },
       args: [msg.selector, msg.value]

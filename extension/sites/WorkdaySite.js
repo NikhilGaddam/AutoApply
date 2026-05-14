@@ -559,11 +559,13 @@
         ? (acct.passwordCreate || acct.password || "")
         : (acct.password || "");
 
+      // Fill verifyPassword FIRST so when password is filled and React runs
+      // cross-field validation, both fields already match (no clear).
       const fills = [
-        { sel: '[data-automation-id="password"]', val: pwValue },
         ...(createFormVisible
           ? [{ sel: '[data-automation-id="verifyPassword"]', val: acct.passwordCreate || acct.password || "" }]
-          : [])
+          : []),
+        { sel: '[data-automation-id="password"]', val: pwValue }
       ];
 
       for (const { sel, val } of fills) {
