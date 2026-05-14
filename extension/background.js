@@ -3,10 +3,27 @@
 // ── Gmail helper ────────────────────────────────────────────────────────────
 
 async function getGmailToken(interactive = true) {
+  const CLIENT_ID = '969122121042-8vrekp0o4g4gr4edsm5dbieik0aottt6.apps.googleusercontent.com';
+  const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
+  const scope = 'https://www.googleapis.com/auth/gmail.readonly';
+  const nonce = Math.random().toString(36).substring(2);
+  const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth' +
+    `?client_id=${encodeURIComponent(CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&response_type=token` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&nonce=${nonce}`;
   return new Promise((resolve, reject) => {
-    chrome.identity.getAuthToken({ interactive }, (token) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(token);
+    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive }, (responseUrl) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      if (!responseUrl) return reject(new Error('Auth cancelled'));
+      const fragment = responseUrl.includes('#')
+        ? responseUrl.split('#')[1]
+        : responseUrl.split('?')[1] || '';
+      const params = new URLSearchParams(fragment);
+      const token = params.get('access_token');
+      if (!token) return reject(new Error('No access_token in response'));
+      resolve(token);
     });
   });
 }
@@ -84,10 +101,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "gmail.signOut") {
-    getGmailToken(false)
-      .then(token => new Promise((res) => chrome.identity.removeCachedAuthToken({ token }, res)))
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: true }));
+    // launchWebAuthFlow tokens are not cached by the identity API;
+    // sign-out is just clearing any browser-cached state.
+    chrome.identity.clearAllCachedAuthTokens(() => sendResponse({ ok: true }));
     return true;
   }
 
