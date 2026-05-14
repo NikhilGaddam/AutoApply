@@ -142,6 +142,7 @@
       }
       const landing = document.querySelector('[data-automation-id="applyManually"]');
       if (landing && !this._isAuthOrFormStep()) {
+        console.log("AutoApply: clicking applyManually tile");
         await this._realClick(landing);
         await new Promise((r) => setTimeout(r, 2500)); // wait for auth page to render
         return; // let next tick handle the auth page
@@ -153,6 +154,7 @@
       const onAuthForm = !!(document.querySelector('[data-automation-id="signInSubmitButton"]') ||
                             document.querySelector('[data-automation-id="createAccountSubmitButton"]'));
       if (signInTile && !onAuthForm && !document.querySelector('[data-automation-id="email"]')) {
+        console.log("AutoApply: clicking Sign In With Email tile");
         await this._realClick(signInTile);
         await new Promise((r) => setTimeout(r, 2500)); // wait for email/password form to expand
         return; // let next tick fill the form
@@ -178,36 +180,43 @@
       const verifyEl   = document.querySelector('[data-automation-id="verifyPassword"]');
       const consentBox = document.querySelector('[data-automation-id="createAccountCheckbox"]');
 
-      // Sign-in form: try once per session; on failure wait 3s then switch to Create Account.
+      // Sign-in form: submit, then wait up to 12s watching for Workday's
+      // error message OR the application form. Do NOT count URL change alone
+      // as success — Workday redirects to /login even on wrong credentials.
       if (signInBtn && !SS.get("signInFailed") && emailEl?.value && pwEl?.value) {
-        // Extra pause: let React finish processing the filled values.
+        // Let React finish processing the filled values before submitting.
         await new Promise((r) => setTimeout(r, 2000));
         try { document.activeElement?.blur?.(); } catch (_) {}
-        await new Promise((r) => setTimeout(r, 1000)); // blur settle
+        await new Promise((r) => setTimeout(r, 1000));
         document.documentElement.setAttribute("data-autoapply-auth", "submit:signin");
-        let r = await this._submitAndWait(signInBtn, {
-          successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
-          errorSel: '[data-automation-id="errorMessage"]',
-          timeoutMs: 10000
-        });
-        // Workday redirects to /login even on wrong credentials, so a URL change
-        // alone is not a real sign-in success. Wait 3s for any pending redirect to
-        // fully settle, then verify we actually landed on the application form.
-        if (r === "success") {
-          await new Promise((res) => setTimeout(res, 3000));
-          const onAppForm = !!(
-            document.querySelector('[data-automation-id="pageFooterNextButton"]') ||
-            document.querySelector('[data-automation-id="legalNameSection_firstName"]')
-          );
-          if (!onAppForm) r = "error";
+        console.log("AutoApply: submitting sign-in for", emailEl.value);
+        await this._realClick(signInBtn);
+
+        // Poll (up to 12s) for either: app form (real success) or error msg (failure).
+        // Keeps polling even after URL change so we catch the error on /login page.
+        let signInResult = "timeout";
+        const pollStart = Date.now();
+        while (Date.now() - pollStart < 12000) {
+          await new Promise((r) => setTimeout(r, 600));
+          if (document.querySelector('[data-automation-id="pageFooterNextButton"], [data-automation-id="legalNameSection_firstName"]')) {
+            signInResult = "success";
+            break;
+          }
+          const errEl = document.querySelector('[data-automation-id="errorMessage"]');
+          if (errEl) {
+            const txt = (errEl.innerText || "").trim();
+            if (txt) { signInResult = "error"; console.warn("AutoApply: sign-in error:", txt); break; }
+          }
         }
-        document.documentElement.setAttribute("data-autoapply-auth", "result:" + r);
-        if (r !== "success") {
+
+        document.documentElement.setAttribute("data-autoapply-auth", "result:" + signInResult);
+        if (signInResult !== "success") {
+          console.log("AutoApply: sign-in failed, switching to Create Account in 3s...");
           SS.set("signInFailed", "1");
-          // Wait 3s then switch to Create Account.
           await new Promise((res) => setTimeout(res, 3000));
           const cl2 = document.querySelector('[data-automation-id="createAccountLink"]');
           if (cl2) {
+            console.log("AutoApply: clicking createAccountLink");
             await this._realClick(cl2);
             await new Promise((res) => setTimeout(res, 3000)); // wait for create form to expand
           }
@@ -217,6 +226,7 @@
 
       // If sign-in is known to fail and we're still on the sign-in form, switch over.
       if (signInBtn && SS.get("signInFailed") && createLink) {
+        console.log("AutoApply: sign-in known failed, clicking createAccountLink");
         await this._realClick(createLink);
         await new Promise((r) => setTimeout(r, 3000)); // wait for create form
         return;
@@ -231,6 +241,7 @@
         try { document.activeElement?.blur?.(); } catch (_) {}
         await new Promise((r) => setTimeout(r, 1000)); // blur settle
         SS.set("createDone", "1");
+        console.log("AutoApply: submitting Create Account for", emailEl.value);
         document.documentElement.setAttribute("data-autoapply-auth", "submit:create");
         const r = await this._submitAndWait(createBtn, {
           successSel: '[data-automation-id="legalNameSection_firstName"], [data-automation-id="pageFooterNextButton"]',
