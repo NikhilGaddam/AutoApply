@@ -5,7 +5,7 @@
   "description": "Detects job application pages and auto-fills your details. Highlights fields it couldn't map for review.",
   "permissions": ["storage", "activeTab", "scripting", "identity"],
   "oauth2": {
-    "client_id": "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "client_id": "969122121042-8vrekp0o4g4gr4edsm5dbieik0aottt6.apps.googleusercontent.com",
     "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]
   },
   "host_permissions": ["<all_urls>"],
