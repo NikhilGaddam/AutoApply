@@ -25,10 +25,10 @@
     // inbox still receives all Workday emails.
     account: {
       email: "ngaddam.dev@gmail.com",
-      password: "Nikhil@3115",
-      // Create Account requires ≥12 chars with upper/lower/number/special.
-      // Sign-in uses `password` above. If sign-in fails the extension
-      // creates a new account using this stronger password.
+      // password is used for sign-in attempts. passwordCreate is used when
+      // creating a new Workday account (must be ≥12 chars with complexity).
+      // Both are set to the same strong value so sign-in works after creation.
+      password: "AutoApply@2026",
       passwordCreate: "AutoApply@2026"
     },
 
