@@ -15,6 +15,8 @@
     { key: "email",           patterns: [/\bemail\b/, /\be-?mail[\s_-]*address\b/] },
     { key: "phone",           patterns: [/\bphone\b/, /\bmobile\b/, /\btelephone\b/, /\bcontact[\s_-]*number\b/] },
 
+    { key: "workAuthorization.requiresSponsorship", patterns: [/\b(visa[\s_-]*)?sponsorship\b/, /\brequire[\s_-]*sponsorship\b/] },
+
     { key: "address.line1",    patterns: [/\baddress[\s_-]*(line[\s_-]*1|1)?\b/, /\bstreet\b/] },
     { key: "address.city",     patterns: [/\bcity\b/, /\btown\b/] },
     { key: "address.state",    patterns: [/\bstate\b/, /\bprovince\b/, /\bregion\b/] },
@@ -37,7 +39,6 @@
     { key: "noticePeriod",     patterns: [/\bnotice[\s_-]*period\b/, /\bavailability[\s_-]*to[\s_-]*start\b/] },
 
     { key: "workAuthorization.authorizedToWork", patterns: [/\bauthori[sz]ed[\s_-]*to[\s_-]*work\b/, /\blegally[\s_-]*authori[sz]ed\b/, /\bright[\s_-]*to[\s_-]*work\b/] },
-    { key: "workAuthorization.requiresSponsorship", patterns: [/\b(visa[\s_-]*)?sponsorship\b/, /\brequire[\s_-]*sponsorship\b/] },
     { key: "demographics.gender",         patterns: [/\bgender\b/, /\bgender[\s_-]*identity\b/] },
     { key: "demographics.race",           patterns: [/\brace\b/, /\brace[\s_-]*\/[\s_-]*ethnicit/, /\bracial[\s_-]*identity\b/] },
     { key: "demographics.ethnicity",      patterns: [/\bethnicit/, /\bhispanic\b/, /\blatino\b/] },

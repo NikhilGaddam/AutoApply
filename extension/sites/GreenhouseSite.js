@@ -24,6 +24,14 @@
       byId("email", "email");
       // Use local-number-only to avoid double-prefix with the country code selector
       byId("phone", "phoneLocal");
+      byId("country", "address.country");
+      byId("question_15996710008", "workAuthorization.requiresSponsorship");
+      byId("question_15996711008", "relativesAtCompany");
+      byId("gender", "demographics.gender");
+      byId("hispanic_ethnicity", "demographics.ethnicity");
+      byId("race", "demographics.race");
+      byId("veteran_status", "demographics.veteranStatus");
+      byId("disability_status", "demographics.disabilityStatus");
       return map;
     }
 
