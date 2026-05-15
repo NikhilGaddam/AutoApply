@@ -9,6 +9,33 @@
     <h3>AutoApply</h3>
     <p class="muted" id="site"></p>
 
+    <div id="foundry-section" class="foundry-section">
+      <div class="section-title">Anthropic Foundry</div>
+      <label>
+        API key
+        <input id="foundry-api-key" type="password" placeholder="ANTHROPIC_FOUNDRY_API_KEY" autocomplete="off" />
+      </label>
+      <label>
+        Resource
+        <input id="foundry-resource" type="text" placeholder="ANTHROPIC_FOUNDRY_RESOURCE" autocomplete="off" />
+      </label>
+      <label>
+        Base URL
+        <input id="foundry-base-url" type="url" placeholder="ANTHROPIC_FOUNDRY_BASE_URL" autocomplete="off" />
+      </label>
+      <label>
+        Claude model
+        <select id="foundry-model">
+          <option value="sonnet">Sonnet</option>
+          <option value="haiku">Haiku</option>
+          <option value="opus-4-6">Opus 4-6</option>
+          <option value="opus-4-7">Opus 4-7</option>
+        </select>
+      </label>
+      <button id="foundry-save" class="secondary compact">Save Foundry settings</button>
+      <p class="mini-status" id="foundry-status"></p>
+    </div>
+
     <!-- Workday live status panel -->
     <div id="wd-panel" class="wd-panel hidden">
       <div class="status-row">
@@ -37,6 +64,7 @@
     <button id="clear" class="secondary">Clear highlights</button>
     <button id="options" class="link">Edit profile</button>
     <p class="status" id="msg"></p>
+    <ul id="missing-list" class="missing-list"></ul>
   </div>
   <script src="popup.js"></script>
 </body>

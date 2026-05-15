@@ -3,6 +3,14 @@ async function getActiveTab() {
   return tab;
 }
 
+const FOUNDRY_KEY = "autoapply.foundry";
+const DEFAULT_FOUNDRY = {
+  apiKey: "",
+  resource: "",
+  baseUrl: "",
+  model: "sonnet"
+};
+
 function humanStatus(s) {
   if (!s) return { text: "Starting…", dot: "gray" };
   const auth = s.authState || "";
@@ -33,8 +41,49 @@ function humanStatus(s) {
   const noticeEl = document.getElementById("verify-notice");
   const pauseBtn = document.getElementById("pause");
   const msgEl    = document.getElementById("msg");
+  const missingListEl = document.getElementById("missing-list");
+
+  const foundryApiKey = document.getElementById("foundry-api-key");
+  const foundryResource = document.getElementById("foundry-resource");
+  const foundryBaseUrl = document.getElementById("foundry-base-url");
+  const foundryModel = document.getElementById("foundry-model");
+  const foundrySave = document.getElementById("foundry-save");
+  const foundryStatus = document.getElementById("foundry-status");
 
   try { siteEl.textContent = new URL(tab.url).hostname; } catch (_) {}
+
+  async function loadFoundrySettings() {
+    try {
+      const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
+      const cfg = { ...DEFAULT_FOUNDRY, ...(stored?.[FOUNDRY_KEY] || {}) };
+      foundryApiKey.value = cfg.apiKey || "";
+      foundryResource.value = cfg.resource || "";
+      foundryBaseUrl.value = cfg.baseUrl || "";
+      foundryModel.value = cfg.model || DEFAULT_FOUNDRY.model;
+    } catch (_) {}
+  }
+
+  async function saveFoundrySettings() {
+    const cfg = {
+      apiKey: foundryApiKey.value.trim(),
+      resource: foundryResource.value.trim(),
+      baseUrl: foundryBaseUrl.value.trim(),
+      model: foundryModel.value
+    };
+    foundrySave.disabled = true;
+    foundryStatus.textContent = "Saving...";
+    try {
+      await chrome.storage.sync.set({ [FOUNDRY_KEY]: cfg });
+      foundryStatus.textContent = "Saved.";
+    } catch (e) {
+      foundryStatus.textContent = "Could not save.";
+    } finally {
+      foundrySave.disabled = false;
+    }
+  }
+
+  loadFoundrySettings();
+  foundrySave.addEventListener("click", saveFoundrySettings);
 
   let isPaused = false;
 
@@ -71,10 +120,19 @@ function humanStatus(s) {
 
   document.getElementById("fill").addEventListener("click", async () => {
     msgEl.textContent = "Filling…";
+    missingListEl.innerHTML = "";
     try {
       const res = await chrome.tabs.sendMessage(tab.id, { type: "autoapply.fill" });
       if (res?.ok) {
         msgEl.textContent = `Filled ${res.filled} · ${res.unmapped} need review (${res.site})`;
+        const missingFields = res.missingFields || [];
+        if (missingFields.length) {
+          for (const name of missingFields) {
+            const li = document.createElement("li");
+            li.textContent = name;
+            missingListEl.appendChild(li);
+          }
+        }
       } else {
         msgEl.textContent = res?.error || "Failed to fill.";
       }

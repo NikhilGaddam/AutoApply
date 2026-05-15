@@ -59,6 +59,41 @@
     return result;
   }
 
+  function missingFieldNames(result) {
+    const seen = new Set();
+    const names = [];
+    const requiredText = (el) => {
+      const parts = [];
+      if (el?.id) {
+        const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lbl) parts.push(lbl.innerText || lbl.textContent || "");
+      }
+      const labelledBy = el?.getAttribute?.("aria-labelledby");
+      if (labelledBy) {
+        labelledBy.split(/\s+/).forEach(id => {
+          const node = document.getElementById(id);
+          if (node) parts.push(node.innerText || node.textContent || "");
+        });
+      }
+      const wrapper = el?.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
+      if (wrapper) parts.push(wrapper.innerText || wrapper.textContent || "");
+      return parts.join(" ");
+    };
+    const isRequired = (el) => {
+      if (!el || el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+      return el.required || el.getAttribute?.("aria-required") === "true" || /\*/.test(requiredText(el));
+    };
+    const add = (el, suffix = "") => {
+      if (!isRequired(el)) return;
+      const label = ns.FieldMatcher?.collectLabelText?.(el) || el?.name || el?.id || el?.tagName || "Unknown field";
+      const name = `${String(label).replace(/\s+/g, " ").trim().slice(0, 90)}${suffix}`;
+      if (!seen.has(name)) { seen.add(name); names.push(name); }
+    };
+    (result.unmapped || []).forEach(el => add(el));
+    (result.skipped || []).forEach(item => add(item.el, item.reason?.startsWith("no-value:") ? " (no profile value)" : ""));
+    return names;
+  }
+
   // Quietly re-fill any newly added question wrappers (e.g. demographic survey
   // sections that load lazily) without re-rendering the overlay each time.
   async function quietFill() {
@@ -82,7 +117,8 @@
         filled: r.filled.length,
         unmapped: r.unmapped.length,
         skipped: r.skipped.length,
-        site: r.site
+        site: r.site,
+        missingFields: missingFieldNames(r)
       })).catch((e) => sendResponse({ ok: false, error: String(e) }));
       return true;
     }

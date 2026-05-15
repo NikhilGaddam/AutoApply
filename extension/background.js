@@ -114,7 +114,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       world: "MAIN",
       func: (inputId, targets) => {
         function getSelectInstance(el) {
-          const container = el?.closest('[class*="container--"], [class*="select__container"]');
+          const container = el?.closest('.select__container') || el?.closest('.select');
           if (!container) return null;
           const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
           if (!fiberKey) return null;

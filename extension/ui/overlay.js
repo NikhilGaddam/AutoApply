@@ -71,8 +71,41 @@
     return (el.name || el.id || el.tagName).toString().toLowerCase();
   }
 
+  function requiredText(el) {
+    const parts = [];
+    if (el?.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl) parts.push(lbl.innerText || lbl.textContent || "");
+    }
+    const labelledBy = el?.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      labelledBy.split(/\s+/).forEach(id => {
+        const node = document.getElementById(id);
+        if (node) parts.push(node.innerText || node.textContent || "");
+      });
+    }
+    const wrapper = el?.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
+    if (wrapper) parts.push(wrapper.innerText || wrapper.textContent || "");
+    return parts.join(" ");
+  }
+
+  function isRequiredField(el) {
+    if (!el || el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+    return el.required || el.getAttribute?.("aria-required") === "true" || /\*/.test(requiredText(el));
+  }
+
   function showReview({ filled, unmapped, skipped, site, onSubmit, onCancel }) {
     document.querySelectorAll(".autoapply-toast").forEach((n) => n.remove());
+
+    const missing = [];
+    const seen = new Set();
+    const addMissing = (el, suffix = "") => {
+      if (!isRequiredField(el)) return;
+      const name = `${describe(el)}${suffix}`;
+      if (!seen.has(name)) { seen.add(name); missing.push({ el, name }); }
+    };
+    unmapped.forEach(el => addMissing(el));
+    skipped.forEach(item => addMissing(item.el, item.reason?.startsWith("no-value:") ? " (no profile value)" : ""));
 
     const kind = getSubmitKind();
     const primaryLabel = kind === "next"
@@ -87,7 +120,7 @@
       <div class="autoapply-row"><span>Filled</span><b>${filled.length}</b></div>
       <div class="autoapply-row"><span>Needs review</span><b>${unmapped.length}</b></div>
       <div class="autoapply-row"><span>Skipped (file/empty)</span><b>${skipped.length}</b></div>
-      ${unmapped.length ? `<ul class="autoapply-unmapped-list"></ul>` : ""}
+      ${missing.length ? `<div class="autoapply-missing-title">Missing fields</div><ul class="autoapply-unmapped-list"></ul>` : ""}
       <div class="autoapply-actions">
         <button class="autoapply-primary">${primaryLabel}</button>
         <button class="autoapply-secondary">Re-scan</button>
@@ -97,9 +130,9 @@
 
     const list = toast.querySelector(".autoapply-unmapped-list");
     if (list) {
-      unmapped.forEach((el) => {
+      missing.forEach(({ el, name }) => {
         const li = document.createElement("li");
-        li.textContent = "• " + describe(el);
+        li.textContent = name;
         li.addEventListener("click", () => {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
           el.focus?.();
