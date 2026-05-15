@@ -89,7 +89,7 @@ async function fetchRecentEmails(count = 5) {
 
 const FOUNDRY_KEY = "autoapply.foundry";
 
-function parseAiJson(text) {
+function parseClaudeAgentJson(text) {
   const raw = String(text || "").trim();
   if (!raw) return null;
   try { return JSON.parse(raw); } catch (_) {}
@@ -105,7 +105,7 @@ function parseAiJson(text) {
   return null;
 }
 
-async function fillMissingFieldsWithAi(payload) {
+async function runClaudeSdkAgentTask(payload) {
   const stored = await new Promise((resolve, reject) => {
     chrome.storage.sync.get(FOUNDRY_KEY, (result) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -122,24 +122,33 @@ async function fillMissingFieldsWithAi(payload) {
   const url = /^https?:\/\//i.test(cfg.resource) ? cfg.resource : `${baseUrl}/${resource}`;
   const model = cfg.model || "sonnet";
 
+  const agentTask = {
+    agent: "AutoApply Claude SDK Agent",
+    objective: "Fill only required missing job application fields and then return control to the human.",
+    instructions: [
+      "Use only the provided profile JSON, resume/details text, and page context.",
+      "Create field-fill actions only for fields you can answer confidently from the supplied data.",
+      "For yes/no fields, answer with Yes or No.",
+      "Do not submit the application.",
+      "Return strict JSON only."
+    ],
+    outputSchema: {
+      actions: [
+        { type: "fill", id: "field id", label: "field label", value: "answer" }
+      ],
+      handoff: "Hand over to Human"
+    },
+    missingRequiredFields: payload.fields || [],
+    profile: payload.profile || {},
+    resumeText: payload.resumeText || "",
+    page: payload.page || {}
+  };
+
   const prompt = [
-    "You are filling required missing fields on a job application for Nikhil Gaddam.",
-    "Use only the provided profile JSON, resume/details text, and page context.",
-    "Return strict JSON only in this shape:",
-    "{\"answers\":[{\"id\":\"field id\",\"label\":\"field label\",\"value\":\"answer\"}]}",
-    "For yes/no fields, answer with Yes or No. If the profile does not contain enough information, omit that field.",
+    "You are AutoApply Claude SDK Agent.",
+    "Run this agent task and return only the JSON matching outputSchema.",
     "",
-    "Missing required fields:",
-    JSON.stringify(payload.fields || [], null, 2),
-    "",
-    "Profile JSON and details:",
-    JSON.stringify(payload.profile || {}, null, 2),
-    "",
-    "Resume/details text:",
-    payload.resumeText || "",
-    "",
-    "Page context:",
-    JSON.stringify(payload.page || {}, null, 2)
+    JSON.stringify(agentTask, null, 2)
   ].join("\n");
 
   const body = {
@@ -167,16 +176,17 @@ async function fillMissingFieldsWithAi(payload) {
                json.choices?.[0]?.message?.content ||
                json.output_text ||
                json.text || "";
-  const parsed = parseAiJson(text) || json;
-  const answers = Array.isArray(parsed.answers) ? parsed.answers : [];
-  return { answers };
+  const parsed = parseClaudeAgentJson(text) || json;
+  const actions = Array.isArray(parsed.actions) ? parsed.actions :
+                  Array.isArray(parsed.answers) ? parsed.answers.map(a => ({ type: "fill", ...a })) : [];
+  return { actions, handoff: parsed.handoff || "Hand over to Human" };
 }
 
 // Fill an input in the page's MAIN world (bypasses isolated-world React
 // tracker issues). Content scripts send this message when the normal
 // isolated-world fill doesn't notify React's own-property tracker.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "ai.fillMissingFields") {
+  if (msg.type === "claudeAgent.fillMissingFields") {
     let responded = false;
     const safeSend = (response) => {
       if (responded) return;
@@ -186,7 +196,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const timeout = setTimeout(() => {
       safeSend({ ok: false, error: "AI handoff timed out." });
     }, 45000);
-    fillMissingFieldsWithAi(msg.payload || {})
+    runClaudeSdkAgentTask(msg.payload || {})
       .then(result => { clearTimeout(timeout); safeSend({ ok: true, ...result }); })
       .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e) }); });
     return true;

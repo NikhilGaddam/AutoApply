@@ -154,7 +154,7 @@
       fields: missing.map(({ id, name, label, type, options }) => ({ id, name, label, type, options }))
     };
     const resp = await new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: "ai.fillMissingFields", payload }, response => {
+      chrome.runtime.sendMessage({ type: "claudeAgent.fillMissingFields", payload }, response => {
         if (chrome.runtime.lastError) {
           resolve({ ok: false, error: chrome.runtime.lastError.message });
           return;
@@ -168,13 +168,14 @@
     }
 
     let filled = 0;
-    for (const answer of resp.answers || []) {
-      const field = missing.find(item => item.id && item.id === answer.id) ||
-                    missing.find(item => item.label === answer.label) ||
-                    missing.find(item => item.label.toLowerCase() === String(answer.label || "").toLowerCase());
-      if (field && await fillAiAnswer(field, answer.value)) filled += 1;
+    for (const action of resp.actions || resp.answers || []) {
+      if (action.type && action.type !== "fill") continue;
+      const field = missing.find(item => item.id && item.id === action.id) ||
+                    missing.find(item => item.label === action.label) ||
+                    missing.find(item => item.label.toLowerCase() === String(action.label || "").toLowerCase());
+      if (field && await fillAiAnswer(field, action.value)) filled += 1;
     }
-    setAiStatus("Hand over to Human", "done");
+    setAiStatus(resp.handoff || "Hand over to Human", "done");
     return { attempted: true, filled, missing: requiredMissingItems(result) };
   }
 
