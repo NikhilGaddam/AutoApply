@@ -92,3 +92,19 @@
                  background: #374151; color: #e5e7eb; border: 0; cursor: pointer; }
 .wd-pause-btn:hover { background: #4b5563; }
 .wd-hint { margin-top: 6px; font-size: 11px; color: #fde68a; line-height: 1.4; }
+
+.autoapply-ai-status {
+  position: fixed;
+  right: 16px;
+  bottom: 190px;
+  z-index: 2147483647;
+  background: #1d4ed8;
+  color: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  max-width: 320px;
+}
+.autoapply-ai-status[data-tone="done"] { background: #15803d; }
+.autoapply-ai-status[data-tone="error"] { background: #b91c1c; }

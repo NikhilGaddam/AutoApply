@@ -87,10 +87,97 @@ async function fetchRecentEmails(count = 5) {
 
 // ── Message handlers ─────────────────────────────────────────────────────────
 
+const FOUNDRY_KEY = "autoapply.foundry";
+
+function parseAiJson(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (_) {}
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try { return JSON.parse(fenced[1]); } catch (_) {}
+  }
+  const first = raw.indexOf("{");
+  const last = raw.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try { return JSON.parse(raw.slice(first, last + 1)); } catch (_) {}
+  }
+  return null;
+}
+
+async function fillMissingFieldsWithAi(payload) {
+  const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
+  const cfg = stored?.[FOUNDRY_KEY] || {};
+  if (!cfg.apiKey || !cfg.resource || !cfg.baseUrl) {
+    throw new Error("Foundry settings are missing in the extension popup.");
+  }
+
+  const baseUrl = String(cfg.baseUrl).replace(/\/+$/, "");
+  const resource = String(cfg.resource).replace(/^\/+/, "");
+  const url = /^https?:\/\//i.test(cfg.resource) ? cfg.resource : `${baseUrl}/${resource}`;
+  const model = cfg.model || "sonnet";
+
+  const prompt = [
+    "You are filling required missing fields on a job application for Nikhil Gaddam.",
+    "Use only the provided profile JSON, resume/details text, and page context.",
+    "Return strict JSON only in this shape:",
+    "{\"answers\":[{\"id\":\"field id\",\"label\":\"field label\",\"value\":\"answer\"}]}",
+    "For yes/no fields, answer with Yes or No. If the profile does not contain enough information, omit that field.",
+    "",
+    "Missing required fields:",
+    JSON.stringify(payload.fields || [], null, 2),
+    "",
+    "Profile JSON and details:",
+    JSON.stringify(payload.profile || {}, null, 2),
+    "",
+    "Resume/details text:",
+    payload.resumeText || "",
+    "",
+    "Page context:",
+    JSON.stringify(payload.page || {}, null, 2)
+  ].join("\n");
+
+  const body = {
+    model,
+    max_tokens: 1200,
+    temperature: 0,
+    messages: [{ role: "user", content: prompt }]
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": cfg.apiKey,
+      "api-key": cfg.apiKey,
+      "authorization": `Bearer ${cfg.apiKey}`,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error?.message || json.message || `Foundry request failed: ${res.status}`);
+
+  const text = json.content?.map?.(part => part.text || "").join("\n") ||
+               json.choices?.[0]?.message?.content ||
+               json.output_text ||
+               json.text || "";
+  const parsed = parseAiJson(text) || json;
+  const answers = Array.isArray(parsed.answers) ? parsed.answers : [];
+  return { answers };
+}
+
 // Fill an input in the page's MAIN world (bypasses isolated-world React
 // tracker issues). Content scripts send this message when the normal
 // isolated-world fill doesn't notify React's own-property tracker.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "ai.fillMissingFields") {
+    fillMissingFieldsWithAi(msg.payload || {})
+      .then(result => sendResponse({ ok: true, ...result }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   if (msg.type === "gmail.fetchRecent") {
     fetchRecentEmails(msg.count || 5)
       .then(emails => sendResponse({ ok: true, emails }))

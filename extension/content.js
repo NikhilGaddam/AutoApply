@@ -40,6 +40,136 @@
     ns.Overlay.focusSubmit();
   }
 
+  function setAiStatus(text, tone = "info") {
+    let el = document.querySelector(".autoapply-ai-status");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "autoapply-ai-status";
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.setAttribute("data-tone", tone);
+    document.documentElement.setAttribute("data-autoapply-ai-status", text);
+  }
+
+  function cleanText(node) {
+    if (!node) return "";
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll("input, select, textarea, button, svg, ul, ol, option").forEach(n => n.remove());
+    return (clone.innerText || clone.textContent || "").replace(/[*✱]/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function fieldLabel(el) {
+    if (!el) return "";
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const text = cleanText(lbl);
+      if (text) return text;
+    }
+    const labelledBy = el.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      const text = labelledBy.split(/\s+/).map(id => cleanText(document.getElementById(id))).filter(Boolean).join(" ");
+      if (text) return text;
+    }
+    const wrapper = el.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
+    const wrapperLabel = wrapper?.querySelector?.(":scope > label, :scope > legend, :scope > .label, :scope > .select__label, :scope > .application-label");
+    const text = cleanText(wrapperLabel);
+    if (text) return text;
+    return (el.getAttribute?.("placeholder") || el.name || el.id || "").replace(/\s+/g, " ").trim();
+  }
+
+  function hasValue(el) {
+    if (!el) return false;
+    if ((el.type || "").toLowerCase() === "file") return !!el.files?.length;
+    const selectRoot = el.closest?.(".select__container, .select");
+    const selected = selectRoot?.querySelector?.("[class*='single-value']")?.textContent?.trim();
+    if (selected && !/^select\.\.\.$/i.test(selected)) return true;
+    return !!String(el.value || "").trim();
+  }
+
+  function requiredText(el) {
+    const parts = [];
+    if (el?.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl) parts.push(lbl.innerText || lbl.textContent || "");
+    }
+    const labelledBy = el?.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      labelledBy.split(/\s+/).forEach(id => {
+        const node = document.getElementById(id);
+        if (node) parts.push(node.innerText || node.textContent || "");
+      });
+    }
+    const wrapper = el?.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
+    if (wrapper) parts.push(wrapper.innerText || wrapper.textContent || "");
+    return parts.join(" ");
+  }
+
+  function isRequired(el) {
+    if (!el || el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+    return el.required || el.getAttribute?.("aria-required") === "true" || /\*/.test(requiredText(el));
+  }
+
+  function requiredMissingItems(result) {
+    const seen = new Set();
+    const items = [];
+    const add = (el) => {
+      if (!isRequired(el) || hasValue(el)) return;
+      const label = fieldLabel(el);
+      if (!label) return;
+      const key = el.id || el.name || label;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const selectRoot = el.closest?.(".select__container, .select");
+      const options = selectRoot
+        ? Array.from(selectRoot.querySelectorAll("[class*='select__option']")).map(o => o.textContent.trim()).filter(Boolean)
+        : [];
+      items.push({ el, id: el.id || "", name: el.name || "", label, type: el.type || el.tagName.toLowerCase(), options });
+    };
+    (result.unmapped || []).forEach(add);
+    (result.skipped || []).forEach(item => add(item.el));
+    return items;
+  }
+
+  async function fillAiAnswer(field, value) {
+    if (!field?.el || value == null || value === "") return false;
+    const el = field.el;
+    if (el.classList?.contains("select__input") && el.id) {
+      const targets = (ns.FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
+      const resp = await chrome.runtime.sendMessage({ type: "ghSelectOption", inputId: el.id, targets });
+      return !!resp?.ok;
+    }
+    return ns.FormFiller.fillField(el, value);
+  }
+
+  async function handOverMissingFieldsToAi(profile, result) {
+    const missing = requiredMissingItems(result);
+    if (!missing.length) return { attempted: false, filled: 0, missing };
+    setAiStatus("Taken Over by AI", "working");
+
+    const payload = {
+      profile,
+      resumeText: profile.resumeText || profile.resumeSummary || "",
+      page: { url: location.href, title: document.title, formText: (document.querySelector("form")?.innerText || "").slice(0, 6000) },
+      fields: missing.map(({ id, name, label, type, options }) => ({ id, name, label, type, options }))
+    };
+    const resp = await chrome.runtime.sendMessage({ type: "ai.fillMissingFields", payload });
+    if (!resp?.ok) {
+      setAiStatus(`Hand over to Human - ${resp?.error || "AI handoff failed"}`, "error");
+      return { attempted: true, filled: 0, missing, error: resp?.error || "AI handoff failed" };
+    }
+
+    let filled = 0;
+    for (const answer of resp.answers || []) {
+      const field = missing.find(item => item.id && item.id === answer.id) ||
+                    missing.find(item => item.label === answer.label) ||
+                    missing.find(item => item.label.toLowerCase() === String(answer.label || "").toLowerCase());
+      if (field && await fillAiAnswer(field, answer.value)) filled += 1;
+    }
+    setAiStatus("Hand over to Human", "done");
+    return { attempted: true, filled, missing: requiredMissingItems(result) };
+  }
+
   async function run() {
     const profile = await loadProfile();
     const url = new URL(window.location.href);
@@ -47,6 +177,10 @@
     const site = new Handler(profile);
     ns.Overlay.clearMarks();
     const result = await site.fill();
+    result.ai = await handOverMissingFieldsToAi(profile, result).catch(e => {
+      setAiStatus(`Hand over to Human - ${e.message}`, "error");
+      return { attempted: true, filled: 0, error: e.message, missing: requiredMissingItems(result) };
+    });
     ns.Overlay.markFilled(result.filled.map((f) => f.el));
     ns.Overlay.markUnmapped(result.unmapped);
     ns.Overlay.highlightSubmit();
@@ -60,71 +194,7 @@
   }
 
   function missingFieldNames(result) {
-    const seen = new Set();
-    const names = [];
-    const cleanText = (node) => {
-      if (!node) return "";
-      const clone = node.cloneNode(true);
-      clone.querySelectorAll("input, select, textarea, button, svg, ul, ol, option").forEach(n => n.remove());
-      return (clone.innerText || clone.textContent || "").replace(/[*✱]/g, " ").replace(/\s+/g, " ").trim();
-    };
-    const fieldLabel = (el) => {
-      if (!el) return "";
-      if (el.id) {
-        const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-        const text = cleanText(lbl);
-        if (text) return text;
-      }
-      const labelledBy = el.getAttribute?.("aria-labelledby");
-      if (labelledBy) {
-        const text = labelledBy.split(/\s+/).map(id => cleanText(document.getElementById(id))).filter(Boolean).join(" ");
-        if (text) return text;
-      }
-      const wrapper = el.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
-      const wrapperLabel = wrapper?.querySelector?.(":scope > label, :scope > legend, :scope > .label, :scope > .select__label, :scope > .application-label");
-      const text = cleanText(wrapperLabel);
-      if (text) return text;
-      return (el.getAttribute?.("placeholder") || el.name || el.id || "").replace(/\s+/g, " ").trim();
-    };
-    const hasValue = (el) => {
-      if (!el) return false;
-      if ((el.type || "").toLowerCase() === "file") return !!el.files?.length;
-      const selectRoot = el.closest?.(".select__container, .select");
-      const selected = selectRoot?.querySelector?.("[class*='single-value']")?.textContent?.trim();
-      if (selected && !/^select\.\.\.$/i.test(selected)) return true;
-      return !!String(el.value || "").trim();
-    };
-    const requiredText = (el) => {
-      const parts = [];
-      if (el?.id) {
-        const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-        if (lbl) parts.push(lbl.innerText || lbl.textContent || "");
-      }
-      const labelledBy = el?.getAttribute?.("aria-labelledby");
-      if (labelledBy) {
-        labelledBy.split(/\s+/).forEach(id => {
-          const node = document.getElementById(id);
-          if (node) parts.push(node.innerText || node.textContent || "");
-        });
-      }
-      const wrapper = el?.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
-      if (wrapper) parts.push(wrapper.innerText || wrapper.textContent || "");
-      return parts.join(" ");
-    };
-    const isRequired = (el) => {
-      if (!el || el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
-      return el.required || el.getAttribute?.("aria-required") === "true" || /\*/.test(requiredText(el));
-    };
-    const add = (el) => {
-      if (!isRequired(el) || hasValue(el)) return;
-      const label = fieldLabel(el);
-      if (!label) return;
-      const name = label.slice(0, 90);
-      if (!seen.has(name)) { seen.add(name); names.push(name); }
-    };
-    (result.unmapped || []).forEach(el => add(el));
-    (result.skipped || []).forEach(item => add(item.el));
-    return names;
+    return requiredMissingItems(result).map(item => item.label.slice(0, 90));
   }
 
   // Quietly re-fill any newly added question wrappers (e.g. demographic survey
@@ -151,7 +221,10 @@
         unmapped: r.unmapped.length,
         skipped: r.skipped.length,
         site: r.site,
-        missingFields: missingFieldNames(r)
+        missingFields: missingFieldNames(r),
+        aiStatus: document.documentElement.getAttribute("data-autoapply-ai-status") || null,
+        aiFilled: r.ai?.filled || 0,
+        aiError: r.ai?.error || null
       })).catch((e) => sendResponse({ ok: false, error: String(e) }));
       return true;
     }
