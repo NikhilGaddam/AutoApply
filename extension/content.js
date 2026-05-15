@@ -117,7 +117,7 @@
       if (!isRequired(el) || hasValue(el)) return;
       const label = fieldLabel(el);
       if (!label) return;
-      const key = el.id || el.name || label;
+      const key = label.toLowerCase().replace(/\s+/g, " ").trim();
       if (seen.has(key)) return;
       seen.add(key);
       const selectRoot = el.closest?.(".select__container, .select");
@@ -153,7 +153,15 @@
       page: { url: location.href, title: document.title, formText: (document.querySelector("form")?.innerText || "").slice(0, 6000) },
       fields: missing.map(({ id, name, label, type, options }) => ({ id, name, label, type, options }))
     };
-    const resp = await chrome.runtime.sendMessage({ type: "ai.fillMissingFields", payload });
+    const resp = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: "ai.fillMissingFields", payload }, response => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(response || { ok: false, error: "AI handoff returned no response." });
+      });
+    });
     if (!resp?.ok) {
       setAiStatus(`Hand over to Human - ${resp?.error || "AI handoff failed"}`, "error");
       return { attempted: true, filled: 0, missing, error: resp?.error || "AI handoff failed" };
