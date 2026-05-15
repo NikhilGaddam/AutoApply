@@ -6,6 +6,7 @@
   if (!ns) return;
 
   const STORAGE_KEY = "autoapply.profile";
+  const FOUNDRY_KEY = "autoapply.foundry";
 
   // Deep-merge stored profile over defaults so newly-added keys (e.g. demographics)
   // are always present even if the user's saved profile predates them.
@@ -142,6 +143,75 @@
     return ns.FormFiller.fillField(el, value);
   }
 
+  function parseClaudeAgentJson(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (_) {}
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) {
+      try { return JSON.parse(fenced[1]); } catch (_) {}
+    }
+    const first = raw.indexOf("{");
+    const last = raw.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      try { return JSON.parse(raw.slice(first, last + 1)); } catch (_) {}
+    }
+    return null;
+  }
+
+  async function runClaudeAgentInContent(payload) {
+    const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
+    const cfg = stored?.[FOUNDRY_KEY] || {};
+    if (!cfg.apiKey || !cfg.resource || !cfg.baseUrl) {
+      throw new Error("Foundry settings are missing in the extension popup.");
+    }
+
+    const baseUrl = String(cfg.baseUrl).replace(/\/+$/, "");
+    const resource = String(cfg.resource).replace(/^\/+/, "");
+    const url = /^https?:\/\//i.test(cfg.resource) ? cfg.resource : `${baseUrl}/${resource}`;
+    const model = cfg.model || "sonnet";
+    const agentTask = {
+      agent: "AutoApply Claude SDK Agent",
+      objective: "Fill only required missing job application fields and then return control to the human.",
+      instructions: [
+        "Use only the provided profile JSON, resume/details text, and page context.",
+        "Create field-fill actions only for fields you can answer confidently from the supplied data.",
+        "For yes/no fields, answer with Yes or No.",
+        "Do not submit the application.",
+        "Return strict JSON only."
+      ],
+      outputSchema: { actions: [{ type: "fill", id: "field id", label: "field label", value: "answer" }], handoff: "Hand over to Human" },
+      missingRequiredFields: payload.fields || [],
+      profile: payload.profile || {},
+      resumeText: payload.resumeText || "",
+      page: payload.page || {}
+    };
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": cfg.apiKey,
+        "api-key": cfg.apiKey,
+        "authorization": `Bearer ${cfg.apiKey}`,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1200,
+        temperature: 0,
+        messages: [{ role: "user", content: `You are AutoApply Claude SDK Agent. Run this agent task and return only JSON.\n\n${JSON.stringify(agentTask, null, 2)}` }]
+      })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error?.message || json.message || `Foundry request failed: ${res.status}`);
+    const text = json.content?.map?.(part => part.text || "").join("\n") || json.choices?.[0]?.message?.content || json.output_text || json.text || "";
+    const parsed = parseClaudeAgentJson(text) || json;
+    const actions = Array.isArray(parsed.actions) ? parsed.actions :
+                    Array.isArray(parsed.answers) ? parsed.answers.map(a => ({ type: "fill", ...a })) : [];
+    return { ok: true, actions, handoff: parsed.handoff || "Hand over to Human" };
+  }
+
   async function handOverMissingFieldsToAi(profile, result) {
     const missing = requiredMissingItems(result);
     if (!missing.length) return { attempted: false, filled: 0, missing };
@@ -156,7 +226,9 @@
     const resp = await new Promise(resolve => {
       chrome.runtime.sendMessage({ type: "claudeAgent.fillMissingFields", payload }, response => {
         if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          runClaudeAgentInContent(payload)
+            .then(resolve)
+            .catch(e => resolve({ ok: false, error: e.message || chrome.runtime.lastError.message }));
           return;
         }
         resolve(response || { ok: false, error: "AI handoff returned no response." });
