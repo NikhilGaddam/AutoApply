@@ -129,7 +129,7 @@
     return el.required || el.getAttribute?.("aria-required") === "true" || /\*/.test(requiredText(el));
   }
 
-  function showReview({ filled, unmapped, skipped, site, onSubmit, onCancel }) {
+  function showReview({ filled, unmapped, skipped, site, ai, onSubmit, onCancel }) {
     document.querySelectorAll(".autoapply-toast").forEach((n) => n.remove());
 
     const missing = [];
@@ -156,6 +156,16 @@
       <div class="autoapply-row"><span>Filled</span><b>${filled.length}</b></div>
       <div class="autoapply-row"><span>Needs review</span><b>${unmapped.length}</b></div>
       <div class="autoapply-row"><span>Skipped (file/empty)</span><b>${skipped.length}</b></div>
+      ${ai?.attempted ? `<div class="autoapply-ai-panel">
+        <div class="autoapply-ai-header">
+          <span>AI status</span>
+          <b data-tone="${ai.error ? "error" : "done"}"></b>
+        </div>
+        <details class="autoapply-ai-logs" ${ai.error ? "open" : ""}>
+          <summary>AI logs</summary>
+          <ol></ol>
+        </details>
+      </div>` : ""}
       ${missing.length ? `<div class="autoapply-missing-title">Missing fields</div><ul class="autoapply-unmapped-list"></ul>` : ""}
       <div class="autoapply-actions">
         <button class="autoapply-primary">${primaryLabel}</button>
@@ -163,6 +173,9 @@
         <button class="autoapply-danger">Clear</button>
       </div>
     `;
+
+    const aiStatus = toast.querySelector(".autoapply-ai-header b");
+    if (aiStatus) aiStatus.textContent = ai.status || (ai.error ? `Hand over to Human - ${ai.error}` : "Hand over to Human");
 
     const list = toast.querySelector(".autoapply-unmapped-list");
     if (list) {
@@ -175,6 +188,20 @@
         });
         list.appendChild(li);
       });
+    }
+
+    const aiLogList = toast.querySelector(".autoapply-ai-logs ol");
+    if (aiLogList) {
+      (ai.logs || []).forEach((line) => {
+        const li = document.createElement("li");
+        li.textContent = String(line);
+        aiLogList.appendChild(li);
+      });
+      if (!ai.logs?.length) {
+        const li = document.createElement("li");
+        li.textContent = "No AI log entries were recorded.";
+        aiLogList.appendChild(li);
+      }
     }
 
     // ── Workday live status + Pause/Resume ────────────────────────────────

@@ -159,10 +159,11 @@
     return null;
   }
 
-  async function runClaudeAgentInContent(payload) {
+  async function runClaudeAgentInContent(payload, logs = []) {
     const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
     const cfg = stored?.[FOUNDRY_KEY] || {};
     if (!cfg.apiKey || !cfg.resource || !cfg.baseUrl) {
+      logs.push("Foundry settings check failed: API key, resource, or base URL is missing.");
       throw new Error("Foundry settings are missing in the extension popup.");
     }
 
@@ -170,6 +171,8 @@
     const resource = String(cfg.resource).replace(/^\/+/, "");
     const url = /^https?:\/\//i.test(cfg.resource) ? cfg.resource : `${baseUrl}/${resource}`;
     const model = cfg.model || "sonnet";
+    logs.push(`Using Claude SDK Agent contract with model ${model}.`);
+    logs.push(`Calling Foundry endpoint ${new URL(url).origin}${new URL(url).pathname}.`);
     const agentTask = {
       agent: "AutoApply Claude SDK Agent",
       objective: "Fill only required missing job application fields and then return control to the human.",
@@ -209,13 +212,18 @@
     const parsed = parseClaudeAgentJson(text) || json;
     const actions = Array.isArray(parsed.actions) ? parsed.actions :
                     Array.isArray(parsed.answers) ? parsed.answers.map(a => ({ type: "fill", ...a })) : [];
+    logs.push(`Claude agent returned ${actions.length} action${actions.length === 1 ? "" : "s"}.`);
     return { ok: true, actions, handoff: parsed.handoff || "Hand over to Human" };
   }
 
   async function handOverMissingFieldsToAi(profile, result) {
     const missing = requiredMissingItems(result);
-    if (!missing.length) return { attempted: false, filled: 0, missing };
+    if (!missing.length) return { attempted: false, filled: 0, missing, logs: [] };
+    const logs = [];
+    logs.push(`Found ${missing.length} required missing field${missing.length === 1 ? "" : "s"}.`);
+    missing.forEach(item => logs.push(`Missing: ${item.label}`));
     setAiStatus("Taken Over by AI", "working");
+    logs.push("Status set to Taken Over by AI.");
 
     const payload = {
       profile,
@@ -224,19 +232,24 @@
       fields: missing.map(({ id, name, label, type, options }) => ({ id, name, label, type, options }))
     };
     const resp = await new Promise(resolve => {
+      logs.push("Sending missing-field task to Claude agent via background service worker.");
       chrome.runtime.sendMessage({ type: "claudeAgent.fillMissingFields", payload }, response => {
         if (chrome.runtime.lastError) {
-          runClaudeAgentInContent(payload)
+          logs.push(`Background handoff failed: ${chrome.runtime.lastError.message}`);
+          logs.push("Retrying Claude agent handoff from the content script.");
+          runClaudeAgentInContent(payload, logs)
             .then(resolve)
             .catch(e => resolve({ ok: false, error: e.message || chrome.runtime.lastError.message }));
           return;
         }
+        logs.push("Background service worker returned an AI handoff response.");
         resolve(response || { ok: false, error: "AI handoff returned no response." });
       });
     });
     if (!resp?.ok) {
+      logs.push(`AI handoff failed: ${resp?.error || "AI handoff failed"}`);
       setAiStatus(`Hand over to Human - ${resp?.error || "AI handoff failed"}`, "error");
-      return { attempted: true, filled: 0, missing, error: resp?.error || "AI handoff failed" };
+      return { attempted: true, filled: 0, missing, error: resp?.error || "AI handoff failed", status: `Hand over to Human - ${resp?.error || "AI handoff failed"}`, logs };
     }
 
     let filled = 0;
@@ -245,10 +258,17 @@
       const field = missing.find(item => item.id && item.id === action.id) ||
                     missing.find(item => item.label === action.label) ||
                     missing.find(item => item.label.toLowerCase() === String(action.label || "").toLowerCase());
-      if (field && await fillAiAnswer(field, action.value)) filled += 1;
+      if (field && await fillAiAnswer(field, action.value)) {
+        filled += 1;
+        logs.push(`Filled: ${field.label}`);
+      } else {
+        logs.push(`Skipped AI action: ${action.label || action.id || "unknown field"}`);
+      }
     }
-    setAiStatus(resp.handoff || "Hand over to Human", "done");
-    return { attempted: true, filled, missing: requiredMissingItems(result) };
+    const status = resp.handoff || "Hand over to Human";
+    logs.push(`Status set to ${status}.`);
+    setAiStatus(status, "done");
+    return { attempted: true, filled, missing: requiredMissingItems(result), status, logs };
   }
 
   async function run() {
