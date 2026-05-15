@@ -93,7 +93,8 @@ function normalizeFoundryConfig(raw = {}) {
   return {
     apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
     resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
-    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL)
+    baseUrl: raw.baseUrl || raw.base_url || raw.ANTHROPIC_FOUNDRY_BASE_URL || "",
+    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_DEFAULT_OPUS_MODEL || raw.ANTHROPIC_MODEL)
   };
 }
 
@@ -112,24 +113,51 @@ function missingFoundrySettings(cfg) {
   ].filter(([, value]) => !String(value || "").trim()).map(([name]) => name);
 }
 
-function foundryRequestUrls(resource) {
+function foundryRequestUrls(resource, baseUrl = "") {
   const raw = String(resource || "").trim();
+  const base = String(baseUrl || "").trim();
+  const urls = [];
+  if (base) {
+    try {
+      const baseEndpoint = new URL(base);
+      const basePath = baseEndpoint.pathname.replace(/\/+$/, "");
+      baseEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
+        ? basePath
+        : `${basePath || ""}/models/chat/completions`.replace(/\/+/g, "/");
+      if (!baseEndpoint.searchParams.has("api-version")) baseEndpoint.searchParams.set("api-version", "2024-05-01-preview");
+      urls.push(baseEndpoint.toString());
+    } catch (_) {}
+  }
+  if (/^[a-z0-9-]+$/i.test(raw)) {
+    urls.push(`https://${raw}.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview`);
+    return Array.from(new Set(urls));
+  }
   try {
     const url = new URL(raw);
     const path = url.pathname.replace(/\/+$/, "");
-    if (/\/(v1\/messages|messages|chat\/completions)$/i.test(path)) return [url.toString()];
+    if (/\/(v1\/messages|messages|chat\/completions)$/i.test(path)) return Array.from(new Set([...urls, url.toString()]));
     const messagesUrl = new URL(url.toString());
     messagesUrl.pathname = /\/v1$/i.test(path) ? `${path}/messages` : `${path || ""}/v1/messages`.replace(/\/+/g, "/");
-    return [messagesUrl.toString(), url.toString()];
+    urls.push(messagesUrl.toString(), url.toString());
+    return Array.from(new Set(urls));
   } catch (_) {
-    return [raw];
+    if (raw) urls.push(raw);
+    return Array.from(new Set(urls));
   }
 }
 
-async function fetchClaudeMessages(urls, cfg, body) {
+async function fetchClaudeMessages(urls, cfg, body, logs = []) {
   let lastError = null;
   for (const url of urls) {
-    const res = await fetch(url, {
+    try {
+      const endpoint = new URL(url);
+      logs.push(`Calling Foundry endpoint ${endpoint.origin}${endpoint.pathname}.`);
+    } catch (_) {
+      logs.push("Calling Foundry resource from saved settings.");
+    }
+    let res;
+    try {
+      res = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -139,10 +167,18 @@ async function fetchClaudeMessages(urls, cfg, body) {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify(body)
-    });
+      });
+    } catch (e) {
+      let origin = "saved Foundry endpoint";
+      try { origin = new URL(url).origin; } catch (_) {}
+      lastError = `${e.message || String(e)} (${origin})`;
+      logs.push(`Foundry endpoint fetch failed: ${e.message || String(e)}.`);
+      continue;
+    }
     const json = await res.json().catch(() => ({}));
     if (res.ok) return json;
     lastError = json.error?.message || json.message || `Foundry request failed: ${res.status}`;
+    logs.push(`Foundry endpoint returned ${res.status}.`);
     if (![404, 405].includes(res.status)) break;
   }
   throw new Error(lastError || "Foundry request failed.");
@@ -165,6 +201,7 @@ function parseClaudeAgentJson(text) {
 }
 
 async function runClaudeSdkAgentTask(payload) {
+  const logs = [];
   const stored = await new Promise((resolve, reject) => {
     chrome.storage.sync.get(FOUNDRY_KEY, (result) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -178,6 +215,7 @@ async function runClaudeSdkAgentTask(payload) {
   }
 
   const model = cfg.model;
+  logs.push(`Using Claude SDK Agent contract with model ${model}.`);
 
   const agentTask = {
     agent: "AutoApply Claude SDK Agent",
@@ -211,11 +249,18 @@ async function runClaudeSdkAgentTask(payload) {
   const body = {
     model,
     max_tokens: 1200,
+    max_completion_tokens: 1200,
     temperature: 0,
     messages: [{ role: "user", content: prompt }]
   };
 
-  const json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource), cfg, body);
+  let json;
+  try {
+    json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource, cfg.baseUrl), cfg, body, logs);
+  } catch (e) {
+    e.logs = logs;
+    throw e;
+  }
 
   const text = json.content?.map?.(part => part.text || "").join("\n") ||
                json.choices?.[0]?.message?.content ||
@@ -224,7 +269,8 @@ async function runClaudeSdkAgentTask(payload) {
   const parsed = parseClaudeAgentJson(text) || json;
   const actions = Array.isArray(parsed.actions) ? parsed.actions :
                   Array.isArray(parsed.answers) ? parsed.answers.map(a => ({ type: "fill", ...a })) : [];
-  return { actions, handoff: parsed.handoff || "Hand over to Human" };
+  logs.push(`Claude agent returned ${actions.length} action${actions.length === 1 ? "" : "s"}.`);
+  return { actions, handoff: parsed.handoff || "Hand over to Human", logs };
 }
 
 // Fill an input in the page's MAIN world (bypasses isolated-world React
@@ -243,7 +289,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }, 45000);
     runClaudeSdkAgentTask(msg.payload || {})
       .then(result => { clearTimeout(timeout); safeSend({ ok: true, ...result }); })
-      .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e) }); });
+      .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e), logs: e.logs || [] }); });
     return true;
   }
 

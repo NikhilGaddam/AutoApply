@@ -163,7 +163,8 @@
     return {
       apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
       resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
-      model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL)
+      baseUrl: raw.baseUrl || raw.base_url || raw.ANTHROPIC_FOUNDRY_BASE_URL || "",
+      model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_DEFAULT_OPUS_MODEL || raw.ANTHROPIC_MODEL)
     };
   }
 
@@ -182,17 +183,36 @@
     ].filter(([, value]) => !String(value || "").trim()).map(([name]) => name);
   }
 
-  function foundryRequestUrls(resource) {
+  function foundryRequestUrls(resource, baseUrl = "") {
     const raw = String(resource || "").trim();
+    const base = String(baseUrl || "").trim();
+    const urls = [];
+    if (base) {
+      try {
+        const baseEndpoint = new URL(base);
+        const basePath = baseEndpoint.pathname.replace(/\/+$/, "");
+        baseEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
+          ? basePath
+          : `${basePath || ""}/models/chat/completions`.replace(/\/+/g, "/");
+        if (!baseEndpoint.searchParams.has("api-version")) baseEndpoint.searchParams.set("api-version", "2024-05-01-preview");
+        urls.push(baseEndpoint.toString());
+      } catch (_) {}
+    }
+    if (/^[a-z0-9-]+$/i.test(raw)) {
+      urls.push(`https://${raw}.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview`);
+      return Array.from(new Set(urls));
+    }
     try {
       const url = new URL(raw);
       const path = url.pathname.replace(/\/+$/, "");
-      if (/\/(v1\/messages|messages|chat\/completions)$/i.test(path)) return [url.toString()];
+      if (/\/(v1\/messages|messages|chat\/completions)$/i.test(path)) return Array.from(new Set([...urls, url.toString()]));
       const messagesUrl = new URL(url.toString());
       messagesUrl.pathname = /\/v1$/i.test(path) ? `${path}/messages` : `${path || ""}/v1/messages`.replace(/\/+/g, "/");
-      return [messagesUrl.toString(), url.toString()];
+      urls.push(messagesUrl.toString(), url.toString());
+      return Array.from(new Set(urls));
     } catch (_) {
-      return [raw];
+      if (raw) urls.push(raw);
+      return Array.from(new Set(urls));
     }
   }
 
@@ -205,7 +225,9 @@
       } catch (_) {
         logs.push("Calling Foundry resource from saved settings.");
       }
-      const res = await fetch(url, {
+      let res;
+      try {
+        res = await fetch(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -215,7 +237,14 @@
           "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify(body)
-      });
+        });
+      } catch (e) {
+        let origin = "saved Foundry endpoint";
+        try { origin = new URL(url).origin; } catch (_) {}
+        lastError = `${e.message || String(e)} (${origin})`;
+        logs.push(`Foundry endpoint fetch failed: ${e.message || String(e)}.`);
+        continue;
+      }
       const json = await res.json().catch(() => ({}));
       if (res.ok) return json;
       lastError = json.error?.message || json.message || `Foundry request failed: ${res.status}`;
@@ -253,9 +282,10 @@
       page: payload.page || {}
     };
 
-    const json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource), cfg, {
+    const json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource, cfg.baseUrl), cfg, {
       model,
       max_tokens: 1200,
+      max_completion_tokens: 1200,
       temperature: 0,
       messages: [{ role: "user", content: `You are AutoApply Claude SDK Agent. Run this agent task and return only JSON.\n\n${JSON.stringify(agentTask, null, 2)}` }]
     }, logs);
@@ -294,6 +324,7 @@
           return;
         }
         logs.push("Background service worker returned an AI handoff response.");
+        (response?.logs || []).forEach(line => logs.push(`Background: ${line}`));
         resolve(response || { ok: false, error: "AI handoff returned no response." });
       });
     });

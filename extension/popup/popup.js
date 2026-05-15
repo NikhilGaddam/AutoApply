@@ -7,6 +7,7 @@ const FOUNDRY_KEY = "autoapply.foundry";
 const DEFAULT_FOUNDRY = {
   apiKey: "",
   resource: "",
+  baseUrl: "",
   model: "sonnet"
 };
 
@@ -21,7 +22,8 @@ function normalizeFoundryConfig(raw = {}) {
   return {
     apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
     resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
-    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL)
+    baseUrl: raw.baseUrl || raw.base_url || raw.ANTHROPIC_FOUNDRY_BASE_URL || "",
+    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_DEFAULT_OPUS_MODEL || raw.ANTHROPIC_MODEL)
   };
 }
 
@@ -76,9 +78,12 @@ function humanStatus(s) {
   }
 
   async function saveFoundrySettings() {
+    const stored = await chrome.storage.sync.get(FOUNDRY_KEY).catch(() => ({}));
+    const existing = normalizeFoundryConfig(stored?.[FOUNDRY_KEY] || {});
     const cfg = {
       apiKey: foundryApiKey.value.trim(),
       resource: foundryResource.value.trim(),
+      baseUrl: existing.baseUrl || "",
       model: foundryModel.value
     };
     foundrySave.disabled = true;
