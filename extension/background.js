@@ -93,8 +93,15 @@ function normalizeFoundryConfig(raw = {}) {
   return {
     apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
     resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
-    model: raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL || "sonnet"
+    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL)
   };
+}
+
+function normalizeClaudeModel(model) {
+  const value = String(model || "sonnet").trim();
+  if (value === "opus-4-6") return "claude-opus-4-6";
+  if (value === "opus-4-7") return "claude-opus-4-7";
+  return value || "sonnet";
 }
 
 function missingFoundrySettings(cfg) {
@@ -103,6 +110,42 @@ function missingFoundrySettings(cfg) {
     ["Resource", cfg.resource],
     ["Claude model", cfg.model]
   ].filter(([, value]) => !String(value || "").trim()).map(([name]) => name);
+}
+
+function foundryRequestUrls(resource) {
+  const raw = String(resource || "").trim();
+  try {
+    const url = new URL(raw);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (/\/(v1\/messages|messages|chat\/completions)$/i.test(path)) return [url.toString()];
+    const messagesUrl = new URL(url.toString());
+    messagesUrl.pathname = /\/v1$/i.test(path) ? `${path}/messages` : `${path || ""}/v1/messages`.replace(/\/+/g, "/");
+    return [messagesUrl.toString(), url.toString()];
+  } catch (_) {
+    return [raw];
+  }
+}
+
+async function fetchClaudeMessages(urls, cfg, body) {
+  let lastError = null;
+  for (const url of urls) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": cfg.apiKey,
+        "api-key": cfg.apiKey,
+        "authorization": `Bearer ${cfg.apiKey}`,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify(body)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) return json;
+    lastError = json.error?.message || json.message || `Foundry request failed: ${res.status}`;
+    if (![404, 405].includes(res.status)) break;
+  }
+  throw new Error(lastError || "Foundry request failed.");
 }
 
 function parseClaudeAgentJson(text) {
@@ -134,7 +177,6 @@ async function runClaudeSdkAgentTask(payload) {
     throw new Error(`Foundry settings are missing in the extension popup: ${missing.join(", ")}.`);
   }
 
-  const url = String(cfg.resource).trim();
   const model = cfg.model;
 
   const agentTask = {
@@ -173,19 +215,7 @@ async function runClaudeSdkAgentTask(payload) {
     messages: [{ role: "user", content: prompt }]
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": cfg.apiKey,
-      "api-key": cfg.apiKey,
-      "authorization": `Bearer ${cfg.apiKey}`,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify(body)
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error?.message || json.message || `Foundry request failed: ${res.status}`);
+  const json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource), cfg, body);
 
   const text = json.content?.map?.(part => part.text || "").join("\n") ||
                json.choices?.[0]?.message?.content ||

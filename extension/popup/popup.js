@@ -10,11 +10,18 @@ const DEFAULT_FOUNDRY = {
   model: "sonnet"
 };
 
+function normalizeClaudeModel(model) {
+  const value = String(model || DEFAULT_FOUNDRY.model).trim();
+  if (value === "opus-4-6") return "claude-opus-4-6";
+  if (value === "opus-4-7") return "claude-opus-4-7";
+  return value || DEFAULT_FOUNDRY.model;
+}
+
 function normalizeFoundryConfig(raw = {}) {
   return {
     apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
     resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
-    model: raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL || DEFAULT_FOUNDRY.model
+    model: normalizeClaudeModel(raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL)
   };
 }
 
