@@ -41,6 +41,25 @@
     ns.Overlay.focusSubmit();
   }
 
+  function pickHandlerForPage(url) {
+    let Handler = ns.SiteRegistry.pickHandler(url);
+    if (Handler === ns.GenericSite && ns.GreenhouseSite && document.querySelector("#application-form, .application-question, input#first_name, input#last_name, input#email")) {
+      Handler = ns.GreenhouseSite;
+    }
+    return Handler;
+  }
+
+  function hasApplicationSurface() {
+    if (document.querySelector("#application-form, .application-question, input#first_name, input#last_name, input#email")) return true;
+    const fields = Array.from(document.querySelectorAll("input, textarea, select")).filter(el => {
+      const type = (el.type || "").toLowerCase();
+      if (["hidden", "submit", "button"].includes(type)) return false;
+      if (el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+      return !!(el.offsetParent || el.getClientRects().length);
+    });
+    return fields.length >= 3;
+  }
+
   function setAiStatus(text, tone = "info") {
     let el = document.querySelector(".autoapply-ai-status");
     if (!el) {
@@ -50,7 +69,18 @@
     }
     el.textContent = text;
     el.setAttribute("data-tone", tone);
+    ns.Overlay.updateAi?.({ status: text, tone });
     document.documentElement.setAttribute("data-autoapply-ai-status", text);
+  }
+
+  function summarizeAiValue(value) {
+    const text = String(value ?? "").replace(/\s+/g, " ").trim();
+    if (!text) return "empty value";
+    return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+  }
+  function appendAiLog(logs, line) {
+    logs.push(line);
+    ns.Overlay.updateAi?.({ status: "Taken Over by AI", tone: "working", appendLog: line });
   }
 
   function cleanText(node) {
@@ -81,7 +111,9 @@
 
   function hasValue(el) {
     if (!el) return false;
+    if (el.dataset?.autoapplyAiFilled === "true") return true;
     if ((el.type || "").toLowerCase() === "file") return !!el.files?.length;
+    if (["checkbox", "radio"].includes((el.type || "").toLowerCase())) return !!el.checked;
     const selectRoot = el.closest?.(".select__container, .select");
     const selected = selectRoot?.querySelector?.("[class*='single-value']")?.textContent?.trim();
     if (selected && !/^select\.\.\.$/i.test(selected)) return true;
@@ -116,29 +148,73 @@
     const items = [];
     const add = (el) => {
       if (!isRequired(el) || hasValue(el)) return;
-      const label = fieldLabel(el);
-      if (!label) return;
-      const key = label.toLowerCase().replace(/\s+/g, " ").trim();
-      if (seen.has(key)) return;
-      seen.add(key);
-      const selectRoot = el.closest?.(".select__container, .select");
-      const options = selectRoot
-        ? Array.from(selectRoot.querySelectorAll("[class*='select__option']")).map(o => o.textContent.trim()).filter(Boolean)
-        : [];
-      items.push({ el, id: el.id || "", name: el.name || "", label, type: el.type || el.tagName.toLowerCase(), options });
+      const item = fieldItem(el, result, "required");
+      if (!item || seen.has(item.key)) return;
+      seen.add(item.key);
+      items.push(item);
     };
     (result.unmapped || []).forEach(add);
     (result.skipped || []).forEach(item => add(item.el));
     return items;
   }
 
+  function fieldItem(el, result, reason = "review") {
+    if (!el || hasValue(el)) return null;
+    const label = fieldLabel(el);
+    if (!label) return null;
+    const key = label.toLowerCase().replace(/\s+/g, " ").trim();
+    if (result._autoapplyAiResolvedLabels?.has(key)) return null;
+    const selectRoot = el.closest?.(".select__container, .select") || el.closest?.(".application-question, .form-group, .field, fieldset")?.querySelector?.(".select__container, .select");
+    const options = selectRoot
+      ? Array.from(selectRoot.querySelectorAll("[class*='select__option']")).map(o => o.textContent.trim()).filter(Boolean)
+      : [];
+    return { el, id: el.id || "", name: el.name || "", label, key, reason, type: el.type || el.tagName.toLowerCase(), options };
+  }
+
+  function isEducationField(el) {
+    if (!el || hasValue(el)) return false;
+    const text = `${fieldLabel(el)} ${el.id || ""} ${el.name || ""}`.toLowerCase();
+    return /\b(school|university|college|institution|degree|discipline|field of study|major|education|graduation)\b/.test(text);
+  }
+
+  function educationMissingItems(result) {
+    const seen = new Set(requiredMissingItems(result).map(item => item.key));
+    const items = [];
+    const add = (el) => {
+      if (!isEducationField(el)) return;
+      const item = fieldItem(el, result, "education");
+      if (!item || seen.has(item.key)) return;
+      seen.add(item.key);
+      items.push(item);
+    };
+    (result.unmapped || []).forEach(add);
+    (result.skipped || []).forEach(item => add(item.el));
+    return items;
+  }
+
+  function aiTargetItems(result) {
+    return [...requiredMissingItems(result), ...educationMissingItems(result)];
+  }
+
   async function fillAiAnswer(field, value) {
     if (!field?.el || value == null || value === "") return false;
     const el = field.el;
-    if (el.classList?.contains("select__input") && el.id) {
+    const wrapper = el.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container") || el.parentElement;
+    const selectWrapper = el.closest?.(".select__container, .select") || wrapper?.querySelector?.(".select__container, .select");
+    const ghSelectInput = el.classList?.contains("select__input")
+      ? el
+      : selectWrapper?.querySelector?.("input.select__input[id]");
+    if (ghSelectInput?.id) {
+      const selectRoot = ghSelectInput.closest?.(".select__container, .select") || wrapper;
       const targets = (ns.FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
-      const resp = await chrome.runtime.sendMessage({ type: "ghSelectOption", inputId: el.id, targets });
-      return !!resp?.ok;
+      const before = (selectRoot?.querySelector?.("[class*='single-value']")?.textContent || selectRoot?.innerText || "").trim();
+      const resp = await chrome.runtime.sendMessage({ type: "ghSelectOption", inputId: ghSelectInput.id, targets, value: String(value) });
+      if (!resp?.ok) return false;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const selected = (selectRoot?.querySelector?.("[class*='single-value']")?.textContent || "").trim();
+      if (selected && !/^select\.\.\.$/i.test(selected)) return true;
+      const after = (selectRoot?.innerText || "").trim();
+      return after && after !== before && targets.some(target => after.toLowerCase().includes(target));
     }
     return ns.FormFiller.fillField(el, value);
   }
@@ -191,14 +267,23 @@
       try {
         const baseEndpoint = new URL(base);
         const basePath = baseEndpoint.pathname.replace(/\/+$/, "");
-        baseEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
+        const anthropicEndpoint = new URL(baseEndpoint.toString());
+        anthropicEndpoint.pathname = /\/anthropic\/v1\/messages$/i.test(basePath)
+          ? basePath
+          : `${basePath || ""}/anthropic/v1/messages`.replace(/\/+/g, "/");
+        if (!anthropicEndpoint.searchParams.has("api-version")) anthropicEndpoint.searchParams.set("api-version", "2023-06-01-preview");
+        urls.push(anthropicEndpoint.toString());
+
+        const chatEndpoint = new URL(baseEndpoint.toString());
+        chatEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
           ? basePath
           : `${basePath || ""}/models/chat/completions`.replace(/\/+/g, "/");
-        if (!baseEndpoint.searchParams.has("api-version")) baseEndpoint.searchParams.set("api-version", "2024-05-01-preview");
-        urls.push(baseEndpoint.toString());
+        if (!chatEndpoint.searchParams.has("api-version")) chatEndpoint.searchParams.set("api-version", "2024-05-01-preview");
+        urls.push(chatEndpoint.toString());
       } catch (_) {}
     }
     if (/^[a-z0-9-]+$/i.test(raw)) {
+      urls.push(`https://${raw}.services.ai.azure.com/anthropic/v1/messages?api-version=2023-06-01-preview`);
       urls.push(`https://${raw}.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview`);
       return Array.from(new Set(urls));
     }
@@ -218,12 +303,27 @@
 
   async function fetchClaudeMessages(urls, cfg, body, logs = []) {
     let lastError = null;
+    try {
+        appendAiLog(logs, "Trying local Foundry relay at 127.0.0.1:8765.");
+      const relayRes = await fetch("http://127.0.0.1:8765/foundry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ urls, apiKey: cfg.apiKey, body })
+      });
+      const relayJson = await relayRes.json().catch(() => ({}));
+      if (relayRes.ok) return relayJson;
+      lastError = relayJson.error || `Local Foundry relay failed: ${relayRes.status}`;
+        appendAiLog(logs, lastError);
+    } catch (e) {
+        appendAiLog(logs, `Local Foundry relay unavailable: ${e.message || String(e)}.`);
+    }
+
     for (const url of urls) {
       try {
         const endpoint = new URL(url);
-        logs.push(`Calling Foundry endpoint ${endpoint.origin}${endpoint.pathname}.`);
+          appendAiLog(logs, `Calling Foundry endpoint ${endpoint.origin}${endpoint.pathname}.`);
       } catch (_) {
-        logs.push("Calling Foundry resource from saved settings.");
+          appendAiLog(logs, "Calling Foundry resource from saved settings.");
       }
       let res;
       try {
@@ -242,13 +342,13 @@
         let origin = "saved Foundry endpoint";
         try { origin = new URL(url).origin; } catch (_) {}
         lastError = `${e.message || String(e)} (${origin})`;
-        logs.push(`Foundry endpoint fetch failed: ${e.message || String(e)}.`);
+          appendAiLog(logs, `Foundry endpoint fetch failed: ${e.message || String(e)}.`);
         continue;
       }
       const json = await res.json().catch(() => ({}));
       if (res.ok) return json;
       lastError = json.error?.message || json.message || `Foundry request failed: ${res.status}`;
-      logs.push(`Foundry endpoint returned ${res.status}.`);
+        appendAiLog(logs, `Foundry endpoint returned ${res.status}.`);
       if (![404, 405].includes(res.status)) break;
     }
     throw new Error(lastError || "Foundry request failed.");
@@ -259,24 +359,25 @@
     const cfg = normalizeFoundryConfig(stored?.[FOUNDRY_KEY] || {});
     const missing = missingFoundrySettings(cfg);
     if (missing.length) {
-      logs.push(`Foundry settings check failed: missing ${missing.join(", ")}.`);
+        appendAiLog(logs, `Foundry settings check failed: missing ${missing.join(", ")}.`);
       throw new Error(`Foundry settings are missing in the extension popup: ${missing.join(", ")}.`);
     }
 
     const model = cfg.model;
-    logs.push(`Using Claude SDK Agent contract with model ${model}.`);
+      appendAiLog(logs, `Using Claude SDK Agent contract with model ${model}.`);
     const agentTask = {
       agent: "AutoApply Claude SDK Agent",
-      objective: "Fill only required missing job application fields and then return control to the human.",
+      objective: "Fill required missing job application fields and any remaining Education Details fields, then return control to the human.",
       instructions: [
         "Use only the provided profile JSON, resume/details text, and page context.",
         "Create field-fill actions only for fields you can answer confidently from the supplied data.",
+        "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date should be filled from profile.education when present.",
         "For yes/no fields, answer with Yes or No.",
         "Do not submit the application.",
         "Return strict JSON only."
       ],
       outputSchema: { actions: [{ type: "fill", id: "field id", label: "field label", value: "answer" }], handoff: "Hand over to Human" },
-      missingRequiredFields: payload.fields || [],
+      fieldsToFill: payload.fields || [],
       profile: payload.profile || {},
       resumeText: payload.resumeText || "",
       page: payload.page || {}
@@ -285,7 +386,6 @@
     const json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource, cfg.baseUrl), cfg, {
       model,
       max_tokens: 1200,
-      max_completion_tokens: 1200,
       temperature: 0,
       messages: [{ role: "user", content: `You are AutoApply Claude SDK Agent. Run this agent task and return only JSON.\n\n${JSON.stringify(agentTask, null, 2)}` }]
     }, logs);
@@ -293,62 +393,82 @@
     const parsed = parseClaudeAgentJson(text) || json;
     const actions = Array.isArray(parsed.actions) ? parsed.actions :
                     Array.isArray(parsed.answers) ? parsed.answers.map(a => ({ type: "fill", ...a })) : [];
-    logs.push(`Claude agent returned ${actions.length} action${actions.length === 1 ? "" : "s"}.`);
+      appendAiLog(logs, `Claude agent returned ${actions.length} action${actions.length === 1 ? "" : "s"}.`);
     return { ok: true, actions, handoff: parsed.handoff || "Hand over to Human" };
   }
 
   async function handOverMissingFieldsToAi(profile, result) {
-    const missing = requiredMissingItems(result);
-    if (!missing.length) return { attempted: false, filled: 0, missing, logs: [] };
+    const missing = aiTargetItems(result);
+    if (!missing.length) return { attempted: false, filled: 0, missing: requiredMissingItems(result), logs: [] };
     const logs = [];
-    logs.push(`Found ${missing.length} required missing field${missing.length === 1 ? "" : "s"}.`);
-    missing.forEach(item => logs.push(`Missing: ${item.label}`));
+    const log = (line, status, tone = "working") => {
+      logs.push(line);
+      ns.Overlay.updateAi?.({ status, tone, appendLog: line });
+    };
+    const requiredCount = missing.filter(item => item.reason === "required").length;
+    const educationCount = missing.filter(item => item.reason === "education").length;
+    log(`Found ${requiredCount} required missing field${requiredCount === 1 ? "" : "s"} and ${educationCount} Education Details field${educationCount === 1 ? "" : "s"} for AI.`, "Taken Over by AI");
+    log("Thinking: reviewing the profile, resume context, page text, required unanswered fields, and Education Details fields.", "Taken Over by AI");
+    missing.forEach(item => log(`Thinking about ${item.reason} field: ${item.label}`, "Taken Over by AI"));
     setAiStatus("Taken Over by AI", "working");
-    logs.push("Status set to Taken Over by AI.");
+    log("Status set to Taken Over by AI.", "Taken Over by AI");
 
+    log("Preparing the Claude agent task with field labels, IDs, input types, and available options.", "Taken Over by AI");
     const payload = {
       profile,
       resumeText: profile.resumeText || profile.resumeSummary || "",
       page: { url: location.href, title: document.title, formText: (document.querySelector("form")?.innerText || "").slice(0, 6000) },
-      fields: missing.map(({ id, name, label, type, options }) => ({ id, name, label, type, options }))
+      fields: missing.map(({ id, name, label, type, options, reason }) => ({ id, name, label, type, options, reason }))
     };
     const resp = await new Promise(resolve => {
-      logs.push("Sending missing-field task to Claude agent via background service worker.");
+      log("Sending missing-field task to Claude agent via background service worker.", "Taken Over by AI");
       chrome.runtime.sendMessage({ type: "claudeAgent.fillMissingFields", payload }, response => {
         if (chrome.runtime.lastError) {
-          logs.push(`Background handoff failed: ${chrome.runtime.lastError.message}`);
-          logs.push("Retrying Claude agent handoff from the content script.");
+          log(`Background handoff failed: ${chrome.runtime.lastError.message}`, "Taken Over by AI");
+          log("Retrying Claude agent handoff from the content script.", "Taken Over by AI");
           runClaudeAgentInContent(payload, logs)
             .then(resolve)
             .catch(e => resolve({ ok: false, error: e.message || chrome.runtime.lastError.message }));
           return;
         }
-        logs.push("Background service worker returned an AI handoff response.");
-        (response?.logs || []).forEach(line => logs.push(`Background: ${line}`));
+        log("Background service worker returned an AI handoff response.", "Taken Over by AI");
+        (response?.logs || []).forEach(line => log(`Background: ${line}`, "Taken Over by AI"));
+        if (response && !response.ok && /failed to fetch/i.test(response.error || "")) {
+          log("Background fetch failed; retrying through the local Foundry relay from the content script.", "Taken Over by AI");
+          runClaudeAgentInContent(payload, logs)
+            .then(resolve)
+            .catch(e => resolve({ ok: false, error: e.message || response.error }));
+          return;
+        }
         resolve(response || { ok: false, error: "AI handoff returned no response." });
       });
     });
     if (!resp?.ok) {
-      logs.push(`AI handoff failed: ${resp?.error || "AI handoff failed"}`);
+      log(`AI handoff failed: ${resp?.error || "AI handoff failed"}`, `Hand over to Human - ${resp?.error || "AI handoff failed"}`, "error");
       setAiStatus(`Hand over to Human - ${resp?.error || "AI handoff failed"}`, "error");
       return { attempted: true, filled: 0, missing, error: resp?.error || "AI handoff failed", status: `Hand over to Human - ${resp?.error || "AI handoff failed"}`, logs };
     }
 
     let filled = 0;
+    result._autoapplyAiResolvedLabels = result._autoapplyAiResolvedLabels || new Set();
+    log("Reading Claude's proposed field actions and matching them back to visible required and Education Details controls.", "Taken Over by AI");
     for (const action of resp.actions || resp.answers || []) {
       if (action.type && action.type !== "fill") continue;
       const field = missing.find(item => item.id && item.id === action.id) ||
                     missing.find(item => item.label === action.label) ||
                     missing.find(item => item.label.toLowerCase() === String(action.label || "").toLowerCase());
+      if (field) log(`Filling ${field.label} with value: ${summarizeAiValue(action.value)}.`, "Taken Over by AI");
       if (field && await fillAiAnswer(field, action.value)) {
+        field.el.dataset.autoapplyAiFilled = "true";
+        result._autoapplyAiResolvedLabels.add(field.label.toLowerCase().replace(/\s+/g, " ").trim());
         filled += 1;
-        logs.push(`Filled: ${field.label}`);
+        log(`Filled: ${field.label}`, "Taken Over by AI");
       } else {
-        logs.push(`Skipped AI action: ${action.label || action.id || "unknown field"}`);
+        log(`Skipped AI action: ${action.label || action.id || "unknown field"}`, "Taken Over by AI");
       }
     }
     const status = resp.handoff || "Hand over to Human";
-    logs.push(`Status set to ${status}.`);
+    log(`Status set to ${status}.`, status, "done");
     setAiStatus(status, "done");
     return { attempted: true, filled, missing: requiredMissingItems(result), status, logs };
   }
@@ -356,10 +476,23 @@
   async function run() {
     const profile = await loadProfile();
     const url = new URL(window.location.href);
-    const Handler = ns.SiteRegistry.pickHandler(url);
+    const Handler = pickHandlerForPage(url);
     const site = new Handler(profile);
     ns.Overlay.clearMarks();
     const result = await site.fill();
+    ns.Overlay.markFilled(result.filled.map((f) => f.el));
+    ns.Overlay.markUnmapped(result.unmapped);
+    ns.Overlay.highlightSubmit();
+    const initialMissing = aiTargetItems(result);
+    if (initialMissing.length) {
+      result.ai = { attempted: true, filled: 0, missing: requiredMissingItems(result), status: "Taken Over by AI", logs: ["Preparing AI takeover for required and Education Details fields."] };
+      ns.Overlay.showReview({
+        ...result,
+        site: Handler.label,
+        onSubmit: trySubmit,
+        onCancel: (reason) => { if (reason === "rescan") run(); }
+      });
+    }
     result.ai = await handOverMissingFieldsToAi(profile, result).catch(e => {
       setAiStatus(`Hand over to Human - ${e.message}`, "error");
       return { attempted: true, filled: 0, error: e.message, missing: requiredMissingItems(result) };
@@ -386,7 +519,7 @@
     try {
       const profile = await loadProfile();
       const url = new URL(window.location.href);
-      const Handler = ns.SiteRegistry.pickHandler(url);
+      const Handler = pickHandlerForPage(url);
       const site = new Handler(profile);
       const result = await site.fill();
       ns.Overlay.markFilled(result.filled.map((f) => f.el));
@@ -398,6 +531,7 @@
   chrome.runtime?.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return;
     if (msg.type === "autoapply.fill") {
+      if (!hasApplicationSurface()) return false;
       run().then((r) => sendResponse({
         ok: true,
         filled: r.filled.length,
@@ -412,12 +546,14 @@
       return true;
     }
     if (msg.type === "autoapply.clear") {
+      if (!hasApplicationSurface()) return false;
       ns.Overlay.clearMarks();
       document.querySelectorAll(".autoapply-toast").forEach((n) => n.remove());
       sendResponse({ ok: true });
       return true;
     }
     if (msg.type === "autoapply.status") {
+      if (!hasApplicationSurface()) return false;
       const d = document.documentElement;
       const ss = {};
       try {

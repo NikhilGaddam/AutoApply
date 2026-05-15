@@ -75,7 +75,7 @@
       return new Promise(resolve => {
         const bail = setTimeout(() => resolve(false), 3000);
         chrome.runtime.sendMessage(
-          { type: "ghSelectOption", inputId: el.id, targets },
+          { type: "ghSelectOption", inputId: el.id, targets, value: String(value) },
           resp => {
             clearTimeout(bail);
             if (chrome.runtime.lastError) { resolve(false); return; }

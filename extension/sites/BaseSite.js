@@ -89,14 +89,49 @@
       const stillUnmapped = [];
       for (const el of unmapped) {
         if (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "checkbox") {
-          if (this.tryAcceptConsent(el)) {
-            filled.push({ el, key: "consent", value: true });
+          if (this.tryCheckRequiredCheckbox(el) || this.tryAcceptConsent(el)) {
+            filled.push({ el, key: "checkbox", value: true });
             continue;
           }
         }
         stillUnmapped.push(el);
       }
       return { filled, unmapped: stillUnmapped, skipped, site: this.constructor.id };
+    }
+
+    checkboxText(el) {
+      const { FieldMatcher } = ns;
+      const parts = [FieldMatcher.collectLabelText(el) || ""];
+      let node = el.parentElement, hops = 0;
+      while (node && hops < 4) {
+        parts.push(node.innerText || node.textContent || "");
+        node = node.parentElement;
+        hops += 1;
+      }
+      return parts.join(" ").replace(/\s+/g, " ").trim();
+    }
+
+    isRequiredCheckbox(el) {
+      if (!el || (el.type || "").toLowerCase() !== "checkbox") return false;
+      if (el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+      if (el.required || el.getAttribute?.("aria-required") === "true") return true;
+      return /[*✱]/.test(this.checkboxText(el));
+    }
+
+    checkCheckbox(el) {
+      if (!el || el.checked) return !!el?.checked;
+      el.click();
+      if (!el.checked) {
+        el.checked = true;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return el.checked;
+    }
+
+    tryCheckRequiredCheckbox(el) {
+      if (!this.isRequiredCheckbox(el)) return false;
+      return this.checkCheckbox(el);
     }
 
     /**
@@ -125,14 +160,7 @@
       }
       const CONSENT_RE = /\b(i\s+(agree|accept|consent|acknowledge|certify|confirm)|terms\s+(and|&)\s+conditions|privacy\s+(policy|notice)|terms\s+of\s+(use|service)|accept\s+(the\s+)?(terms|policy|conditions)|i\s+have\s+read|conditions\s+of\s+(employment|application)|legal\s+acknowledgment)\b/i;
       if (!CONSENT_RE.test(text)) return false;
-      el.click();
-      // If click didn't take (framework guards), set checked + fire change.
-      if (!el.checked) {
-        el.checked = true;
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      return el.checked;
+      return this.checkCheckbox(el);
     }
   }
 

@@ -38,6 +38,12 @@
     { key: "desiredSalary",    patterns: [/\bsalary\b/, /\bcompensation[\s_-]*expectation/, /\bexpected[\s_-]*(pay|salary|compensation)\b/] },
     { key: "noticePeriod",     patterns: [/\bnotice[\s_-]*period\b/, /\bavailability[\s_-]*to[\s_-]*start\b/] },
 
+    { key: "education.0.school",       patterns: [/^school$/, /\bschool[\s_-]*name\b/, /\buniversity\b/, /\bcollege\b/, /\binstitution\b/] },
+    { key: "education.0.degree",       patterns: [/^degree$/, /\bdegree[\s_-]*(type|name)?\b/] },
+    { key: "education.0.fieldOfStudy", patterns: [/^discipline$/, /\bfield[\s_-]*of[\s_-]*study\b/, /\bmajor\b/, /\barea[\s_-]*of[\s_-]*study\b/] },
+    { key: "education.0.startDate",    patterns: [/\beducation[\s_-]*start\b/, /\bschool[\s_-]*start\b/] },
+    { key: "education.0.endDate",      patterns: [/\beducation[\s_-]*end\b/, /\bschool[\s_-]*end\b/, /\bgraduation[\s_-]*(date|year)\b/] },
+
     { key: "workAuthorization.authorizedToWork", patterns: [/\bauthori[sz]ed[\s_-]*to[\s_-]*work\b/, /\blegally[\s_-]*authori[sz]ed\b/, /\bright[\s_-]*to[\s_-]*work\b/] },
     { key: "demographics.gender",         patterns: [/\bgender\b/, /\bgender[\s_-]*identity\b/] },
     { key: "demographics.race",           patterns: [/\brace\b/, /\brace[\s_-]*\/[\s_-]*ethnicit/, /\bracial[\s_-]*identity\b/] },

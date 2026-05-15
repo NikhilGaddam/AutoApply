@@ -99,7 +99,9 @@
 
   function hasValue(el) {
     if (!el) return false;
+    if (el.dataset?.autoapplyAiFilled === "true") return true;
     if ((el.type || "").toLowerCase() === "file") return !!el.files?.length;
+    if (["checkbox", "radio"].includes((el.type || "").toLowerCase())) return !!el.checked;
     const selectRoot = el.closest?.(".select__container, .select");
     const selected = selectRoot?.querySelector?.("[class*='single-value']")?.textContent?.trim();
     if (selected && !/^select\.\.\.$/i.test(selected)) return true;
@@ -132,7 +134,7 @@
   function showReview({ filled, unmapped, skipped, site, ai, onSubmit, onCancel }) {
     document.querySelectorAll(".autoapply-toast").forEach((n) => n.remove());
 
-    const missing = [];
+    const missing = ai?.attempted ? (ai.missing || []).map(item => ({ el: item.el, name: item.label || item.name })).filter(item => item.el && item.name) : [];
     const seen = new Set();
     const addMissing = (el) => {
       if (!isRequiredField(el) || hasValue(el)) return;
@@ -140,8 +142,10 @@
       if (!name) return;
       if (!seen.has(name)) { seen.add(name); missing.push({ el, name }); }
     };
-    unmapped.forEach(el => addMissing(el));
-    skipped.forEach(item => addMissing(item.el));
+    if (!ai?.attempted) {
+      unmapped.forEach(el => addMissing(el));
+      skipped.forEach(item => addMissing(item.el));
+    }
 
     const kind = getSubmitKind();
     const primaryLabel = kind === "next"
@@ -161,7 +165,7 @@
           <span>AI status</span>
           <b data-tone="${ai.error ? "error" : "done"}"></b>
         </div>
-        <details class="autoapply-ai-logs" ${ai.error ? "open" : ""}>
+        <details class="autoapply-ai-logs" open>
           <summary>AI logs</summary>
           <ol></ol>
         </details>
@@ -269,5 +273,54 @@
     document.body.appendChild(toast);
   }
 
-  ns.Overlay = { markFilled, markUnmapped, clearMarks, showReview, findSubmitButton, findNextButton, getSubmitKind, highlightSubmit, focusSubmit, HIGHLIGHT_CLASS, FILLED_CLASS, SUBMIT_CLASS };
+  function ensureAiPanel(toast) {
+    let panel = toast.querySelector(".autoapply-ai-panel");
+    if (panel) return panel;
+    const actions = toast.querySelector(".autoapply-actions");
+    panel = document.createElement("div");
+    panel.className = "autoapply-ai-panel";
+    panel.innerHTML = `
+      <div class="autoapply-ai-header">
+        <span>AI status</span>
+        <b></b>
+      </div>
+      <details class="autoapply-ai-logs" open>
+        <summary>AI logs</summary>
+        <ol></ol>
+      </details>
+    `;
+    toast.insertBefore(panel, actions || null);
+    return panel;
+  }
+
+  function updateAi({ status, tone = "info", logs, appendLog, open = true } = {}) {
+    const toast = document.querySelector(".autoapply-toast");
+    if (!toast) return;
+    const panel = ensureAiPanel(toast);
+    const statusEl = panel.querySelector(".autoapply-ai-header b");
+    if (statusEl && status) {
+      statusEl.textContent = status;
+      statusEl.setAttribute("data-tone", tone);
+    }
+    const details = panel.querySelector(".autoapply-ai-logs");
+    if (details && open) details.open = true;
+    const list = panel.querySelector(".autoapply-ai-logs ol");
+    if (!list) return;
+    if (Array.isArray(logs)) {
+      list.textContent = "";
+      logs.forEach(line => {
+        const li = document.createElement("li");
+        li.textContent = String(line);
+        list.appendChild(li);
+      });
+    }
+    if (appendLog) {
+      const li = document.createElement("li");
+      li.textContent = String(appendLog);
+      list.appendChild(li);
+    }
+    list.scrollTop = list.scrollHeight;
+  }
+
+  ns.Overlay = { markFilled, markUnmapped, clearMarks, showReview, updateAi, findSubmitButton, findNextButton, getSubmitKind, highlightSubmit, focusSubmit, HIGHLIGHT_CLASS, FILLED_CLASS, SUBMIT_CLASS };
 })(typeof window !== "undefined" ? window : globalThis);

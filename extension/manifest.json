@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AutoApply",
-  "version": "0.1.0",
+  "version": "0.2.7",
   "description": "Detects job application pages and auto-fills your details. Highlights fields it couldn't map for review.",
   "permissions": ["storage", "activeTab", "scripting", "identity"],
   "oauth2": {
@@ -37,7 +37,7 @@
         "content.js"
       ],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [

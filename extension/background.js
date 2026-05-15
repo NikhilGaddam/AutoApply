@@ -121,14 +121,23 @@ function foundryRequestUrls(resource, baseUrl = "") {
     try {
       const baseEndpoint = new URL(base);
       const basePath = baseEndpoint.pathname.replace(/\/+$/, "");
-      baseEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
+      const anthropicEndpoint = new URL(baseEndpoint.toString());
+      anthropicEndpoint.pathname = /\/anthropic\/v1\/messages$/i.test(basePath)
+        ? basePath
+        : `${basePath || ""}/anthropic/v1/messages`.replace(/\/+/g, "/");
+      if (!anthropicEndpoint.searchParams.has("api-version")) anthropicEndpoint.searchParams.set("api-version", "2023-06-01-preview");
+      urls.push(anthropicEndpoint.toString());
+
+      const chatEndpoint = new URL(baseEndpoint.toString());
+      chatEndpoint.pathname = /\/models\/chat\/completions$/i.test(basePath)
         ? basePath
         : `${basePath || ""}/models/chat/completions`.replace(/\/+/g, "/");
-      if (!baseEndpoint.searchParams.has("api-version")) baseEndpoint.searchParams.set("api-version", "2024-05-01-preview");
-      urls.push(baseEndpoint.toString());
+      if (!chatEndpoint.searchParams.has("api-version")) chatEndpoint.searchParams.set("api-version", "2024-05-01-preview");
+      urls.push(chatEndpoint.toString());
     } catch (_) {}
   }
   if (/^[a-z0-9-]+$/i.test(raw)) {
+    urls.push(`https://${raw}.services.ai.azure.com/anthropic/v1/messages?api-version=2023-06-01-preview`);
     urls.push(`https://${raw}.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview`);
     return Array.from(new Set(urls));
   }
@@ -148,6 +157,21 @@ function foundryRequestUrls(resource, baseUrl = "") {
 
 async function fetchClaudeMessages(urls, cfg, body, logs = []) {
   let lastError = null;
+  try {
+    logs.push("Trying local Foundry relay at 127.0.0.1:8765.");
+    const relayRes = await fetch("http://127.0.0.1:8765/foundry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ urls, apiKey: cfg.apiKey, body })
+    });
+    const relayJson = await relayRes.json().catch(() => ({}));
+    if (relayRes.ok) return relayJson;
+    lastError = relayJson.error || `Local Foundry relay failed: ${relayRes.status}`;
+    logs.push(lastError);
+  } catch (e) {
+    logs.push(`Local Foundry relay unavailable: ${e.message || String(e)}.`);
+  }
+
   for (const url of urls) {
     try {
       const endpoint = new URL(url);
@@ -219,10 +243,11 @@ async function runClaudeSdkAgentTask(payload) {
 
   const agentTask = {
     agent: "AutoApply Claude SDK Agent",
-    objective: "Fill only required missing job application fields and then return control to the human.",
+    objective: "Fill required missing job application fields and any remaining Education Details fields, then return control to the human.",
     instructions: [
       "Use only the provided profile JSON, resume/details text, and page context.",
       "Create field-fill actions only for fields you can answer confidently from the supplied data.",
+      "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date should be filled from profile.education when present.",
       "For yes/no fields, answer with Yes or No.",
       "Do not submit the application.",
       "Return strict JSON only."
@@ -233,7 +258,7 @@ async function runClaudeSdkAgentTask(payload) {
       ],
       handoff: "Hand over to Human"
     },
-    missingRequiredFields: payload.fields || [],
+    fieldsToFill: payload.fields || [],
     profile: payload.profile || {},
     resumeText: payload.resumeText || "",
     page: payload.page || {}
@@ -249,7 +274,6 @@ async function runClaudeSdkAgentTask(payload) {
   const body = {
     model,
     max_tokens: 1200,
-    max_completion_tokens: 1200,
     temperature: 0,
     messages: [{ role: "user", content: prompt }]
   };
@@ -311,10 +335,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // on the React fiber instance (main world only — isolated world cannot call
   // main-world React methods or dispatch trusted events).
   if (msg.type === "ghSelectOption" && sender.tab?.id) {
+    const target = { tabId: sender.tab.id };
+    if (Number.isInteger(sender.frameId) && sender.frameId >= 0) target.frameIds = [sender.frameId];
     chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
+      target,
       world: "MAIN",
-      func: (inputId, targets) => {
+      func: (inputId, targets, displayValue) => {
         function getSelectInstance(el) {
           const container = el?.closest('.select__container') || el?.closest('.select');
           if (!container) return null;
@@ -326,7 +352,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const node = queue.shift();
             if (!node || visited.has(node)) continue;
             visited.add(node);
-            if (node.stateNode && typeof node.stateNode?.selectOption === 'function') return node.stateNode;
+            if (node.stateNode && (typeof node.stateNode?.selectOption === 'function' || typeof node.stateNode?.props?.onChange === 'function')) return node.stateNode;
             if (node.child) queue.push(node.child);
             if (node.sibling) queue.push(node.sibling);
           }
@@ -345,11 +371,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               return l && (l.includes(target) || target.includes(l));
             });
           }
-          if (opt) { inst.selectOption(opt); return true; }
+          if (opt && typeof inst.selectOption === 'function') { inst.selectOption(opt); return true; }
+          if (opt && typeof inst.props?.onChange === 'function') {
+            inst.props.onChange(opt, { action: 'select-option', option: opt });
+            try { inst.props.onMenuClose?.(); } catch (_) {}
+            return true;
+          }
+        }
+        if (typeof inst.props?.onChange === 'function' && displayValue) {
+          const option = { label: displayValue, value: displayValue };
+          inst.props.onChange(option, { action: 'select-option', option });
+          try { inst.props.onMenuClose?.(); } catch (_) {}
+          return true;
         }
         return false;
       },
-      args: [msg.inputId, msg.targets]
+      args: [msg.inputId, msg.targets, msg.value || '']
     })
       .then(results => sendResponse({ ok: results?.[0]?.result === true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
