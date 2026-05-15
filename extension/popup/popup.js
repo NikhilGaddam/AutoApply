@@ -7,9 +7,16 @@ const FOUNDRY_KEY = "autoapply.foundry";
 const DEFAULT_FOUNDRY = {
   apiKey: "",
   resource: "",
-  baseUrl: "",
   model: "sonnet"
 };
+
+function normalizeFoundryConfig(raw = {}) {
+  return {
+    apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
+    resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
+    model: raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL || DEFAULT_FOUNDRY.model
+  };
+}
 
 function humanStatus(s) {
   if (!s) return { text: "Starting…", dot: "gray" };
@@ -45,7 +52,6 @@ function humanStatus(s) {
 
   const foundryApiKey = document.getElementById("foundry-api-key");
   const foundryResource = document.getElementById("foundry-resource");
-  const foundryBaseUrl = document.getElementById("foundry-base-url");
   const foundryModel = document.getElementById("foundry-model");
   const foundrySave = document.getElementById("foundry-save");
   const foundryStatus = document.getElementById("foundry-status");
@@ -55,10 +61,9 @@ function humanStatus(s) {
   async function loadFoundrySettings() {
     try {
       const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
-      const cfg = { ...DEFAULT_FOUNDRY, ...(stored?.[FOUNDRY_KEY] || {}) };
+      const cfg = { ...DEFAULT_FOUNDRY, ...normalizeFoundryConfig(stored?.[FOUNDRY_KEY] || {}) };
       foundryApiKey.value = cfg.apiKey || "";
       foundryResource.value = cfg.resource || "";
-      foundryBaseUrl.value = cfg.baseUrl || "";
       foundryModel.value = cfg.model || DEFAULT_FOUNDRY.model;
     } catch (_) {}
   }
@@ -67,7 +72,6 @@ function humanStatus(s) {
     const cfg = {
       apiKey: foundryApiKey.value.trim(),
       resource: foundryResource.value.trim(),
-      baseUrl: foundryBaseUrl.value.trim(),
       model: foundryModel.value
     };
     foundrySave.disabled = true;

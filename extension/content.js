@@ -159,20 +159,40 @@
     return null;
   }
 
+  function normalizeFoundryConfig(raw = {}) {
+    return {
+      apiKey: raw.apiKey || raw.api_key || raw.key || raw.ANTHROPIC_FOUNDRY_API_KEY || "",
+      resource: raw.resource || raw.endpoint || raw.url || raw.ANTHROPIC_FOUNDRY_RESOURCE || "",
+      model: raw.model || raw.claudeModel || raw.ANTHROPIC_MODEL || "sonnet"
+    };
+  }
+
+  function missingFoundrySettings(cfg) {
+    return [
+      ["API key", cfg.apiKey],
+      ["Resource", cfg.resource],
+      ["Claude model", cfg.model]
+    ].filter(([, value]) => !String(value || "").trim()).map(([name]) => name);
+  }
+
   async function runClaudeAgentInContent(payload, logs = []) {
     const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
-    const cfg = stored?.[FOUNDRY_KEY] || {};
-    if (!cfg.apiKey || !cfg.resource || !cfg.baseUrl) {
-      logs.push("Foundry settings check failed: API key, resource, or base URL is missing.");
-      throw new Error("Foundry settings are missing in the extension popup.");
+    const cfg = normalizeFoundryConfig(stored?.[FOUNDRY_KEY] || {});
+    const missing = missingFoundrySettings(cfg);
+    if (missing.length) {
+      logs.push(`Foundry settings check failed: missing ${missing.join(", ")}.`);
+      throw new Error(`Foundry settings are missing in the extension popup: ${missing.join(", ")}.`);
     }
 
-    const baseUrl = String(cfg.baseUrl).replace(/\/+$/, "");
-    const resource = String(cfg.resource).replace(/^\/+/, "");
-    const url = /^https?:\/\//i.test(cfg.resource) ? cfg.resource : `${baseUrl}/${resource}`;
-    const model = cfg.model || "sonnet";
+    const url = String(cfg.resource).trim();
+    const model = cfg.model;
     logs.push(`Using Claude SDK Agent contract with model ${model}.`);
-    logs.push(`Calling Foundry endpoint ${new URL(url).origin}${new URL(url).pathname}.`);
+    try {
+      const endpoint = new URL(url);
+      logs.push(`Calling Foundry endpoint ${endpoint.origin}${endpoint.pathname}.`);
+    } catch (_) {
+      logs.push("Calling Foundry resource from saved settings.");
+    }
     const agentTask = {
       agent: "AutoApply Claude SDK Agent",
       objective: "Fill only required missing job application fields and then return control to the human.",
