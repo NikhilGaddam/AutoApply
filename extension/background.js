@@ -106,7 +106,12 @@ function parseAiJson(text) {
 }
 
 async function fillMissingFieldsWithAi(payload) {
-  const stored = await chrome.storage.sync.get(FOUNDRY_KEY);
+  const stored = await new Promise((resolve, reject) => {
+    chrome.storage.sync.get(FOUNDRY_KEY, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result || {});
+    });
+  });
   const cfg = stored?.[FOUNDRY_KEY] || {};
   if (!cfg.apiKey || !cfg.resource || !cfg.baseUrl) {
     throw new Error("Foundry settings are missing in the extension popup.");
@@ -172,9 +177,18 @@ async function fillMissingFieldsWithAi(payload) {
 // isolated-world fill doesn't notify React's own-property tracker.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "ai.fillMissingFields") {
+    let responded = false;
+    const safeSend = (response) => {
+      if (responded) return;
+      responded = true;
+      try { sendResponse(response); } catch (_) {}
+    };
+    const timeout = setTimeout(() => {
+      safeSend({ ok: false, error: "AI handoff timed out." });
+    }, 45000);
     fillMissingFieldsWithAi(msg.payload || {})
-      .then(result => sendResponse({ ok: true, ...result }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
+      .then(result => { clearTimeout(timeout); safeSend({ ok: true, ...result }); })
+      .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e) }); });
     return true;
   }
 
