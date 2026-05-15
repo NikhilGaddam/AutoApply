@@ -177,6 +177,17 @@
     return /\b(school|university|college|institution|degree|discipline|field of study|major|education|graduation)\b/.test(text);
   }
 
+  function isAiSafeReviewField(el) {
+    if (!el || hasValue(el)) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    const type = (el.type || "").toLowerCase();
+    if (tag === "input" && ["hidden", "submit", "button", "image", "reset", "file"].includes(type)) return false;
+    if (el.name === "g-recaptcha-response" || /^g-recaptcha-response/.test(el.id || "")) return false;
+    const text = `${fieldLabel(el)} ${el.id || ""} ${el.name || ""}`.toLowerCase();
+    if (/\b(recaptcha|captcha|submit|apply now|send application|marketing|newsletter|sms|text message|opt[- ]?in|terms|privacy policy|personal information policy)\b/.test(text)) return false;
+    return !!fieldLabel(el);
+  }
+
   function educationMissingItems(result) {
     const seen = new Set(requiredMissingItems(result).map(item => item.key));
     const items = [];
@@ -192,8 +203,23 @@
     return items;
   }
 
+  function reviewFieldItems(result) {
+    const seen = new Set([...requiredMissingItems(result), ...educationMissingItems(result)].map(item => item.key));
+    const items = [];
+    const add = (el) => {
+      if (!isAiSafeReviewField(el)) return;
+      const item = fieldItem(el, result, "review");
+      if (!item || seen.has(item.key)) return;
+      seen.add(item.key);
+      items.push(item);
+    };
+    (result.unmapped || []).forEach(add);
+    (result.skipped || []).forEach(item => add(item.el));
+    return items;
+  }
+
   function aiTargetItems(result) {
-    return [...requiredMissingItems(result), ...educationMissingItems(result)];
+    return [...requiredMissingItems(result), ...educationMissingItems(result), ...reviewFieldItems(result)];
   }
 
   async function fillAiAnswer(field, value) {
@@ -209,14 +235,55 @@
       const targets = (ns.FormFiller.expandSynonyms || (v => [v]))(String(value).toLowerCase().trim());
       const before = (selectRoot?.querySelector?.("[class*='single-value']")?.textContent || selectRoot?.innerText || "").trim();
       const resp = await chrome.runtime.sendMessage({ type: "ghSelectOption", inputId: ghSelectInput.id, targets, value: String(value) });
-      if (!resp?.ok) return false;
+      if (!resp?.ok) return fillGhSelectByTyping(ghSelectInput, value, targets);
       await new Promise(resolve => setTimeout(resolve, 250));
       const selected = (selectRoot?.querySelector?.("[class*='single-value']")?.textContent || "").trim();
       if (selected && !/^select\.\.\.$/i.test(selected)) return true;
       const after = (selectRoot?.innerText || "").trim();
-      return after && after !== before && targets.some(target => after.toLowerCase().includes(target));
+      if (after && after !== before && targets.some(target => after.toLowerCase().includes(target))) return true;
+      return fillGhSelectByTyping(ghSelectInput, value, targets);
     }
     return ns.FormFiller.fillField(el, value);
+  }
+
+  async function fillGhSelectByTyping(input, value, targets) {
+    if (!input || value == null || value === "") return false;
+    const selectRoot = input.closest?.(".select__container, .select") || input.parentElement;
+    const control = input.closest?.("[class*='control']") || selectRoot;
+    const targetList = targets?.length ? targets : [String(value).toLowerCase().trim()];
+    const setValue = ns.FormFiller.setNativeValue || ((el, v) => { el.value = v; });
+    control?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    control?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+    control?.click?.();
+    input.focus?.();
+    setValue(input, String(value));
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: String(value) }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowDown", code: "ArrowDown", keyCode: 40 }));
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const optionSelectors = [
+      "[id^='react-select-'][id*='-option-']",
+      "[role='option']",
+      ".select__option",
+      "[class*='option']"
+    ].join(",");
+    const options = Array.from(document.querySelectorAll(optionSelectors)).filter(option => option.offsetParent || option.getClientRects().length);
+    const match = options.find(option => {
+      const text = (option.innerText || option.textContent || "").toLowerCase().trim();
+      return targetList.some(target => text === target || (target.length >= 3 && text && (text.includes(target) || target.includes(text))));
+    }) || options[0];
+    if (match) {
+      match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      match.click?.();
+    } else {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter", code: "Enter", keyCode: 13 }));
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const selected = (selectRoot?.querySelector?.("[class*='single-value']")?.textContent || "").trim();
+    if (selected && !/^select\.\.\.$/i.test(selected)) return true;
+    const text = (selectRoot?.innerText || "").toLowerCase();
+    return targetList.some(target => text.includes(target));
   }
 
   function parseClaudeAgentJson(text) {
@@ -367,11 +434,15 @@
       appendAiLog(logs, `Using Claude SDK Agent contract with model ${model}.`);
     const agentTask = {
       agent: "AutoApply Claude SDK Agent",
-      objective: "Fill required missing job application fields and any remaining Education Details fields, then return control to the human.",
+      objective: "Scan the whole application page and fill every safe, answerable remaining field, then return control to the human.",
       instructions: [
+        "Read the full page context and all fieldsToFill before deciding actions.",
         "Use only the provided profile JSON, resume/details text, and page context.",
-        "Create field-fill actions only for fields you can answer confidently from the supplied data.",
-        "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date should be filled from profile.education when present.",
+        "When options are provided for a dropdown, choose one exact option from that list.",
+        "For 'How did you hear about this job?' source fields, prefer recruiter, talent acquisition, sourcer, reached out, or contacted options; avoid LinkedIn, job board, or job site options when a recruiter-style option exists.",
+        "Create field-fill actions for every safe field you can answer confidently from the supplied data, including optional profile, location, education, employment, work authorization, and screening fields.",
+        "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date must be filled from profile.education when present.",
+        "Do not fill recaptcha, file upload, final submit buttons, marketing opt-ins, SMS opt-ins, or fields that require a preference not present in the profile.",
         "For yes/no fields, answer with Yes or No.",
         "Do not submit the application.",
         "Return strict JSON only."
@@ -407,8 +478,9 @@
     };
     const requiredCount = missing.filter(item => item.reason === "required").length;
     const educationCount = missing.filter(item => item.reason === "education").length;
-    log(`Found ${requiredCount} required missing field${requiredCount === 1 ? "" : "s"} and ${educationCount} Education Details field${educationCount === 1 ? "" : "s"} for AI.`, "Taken Over by AI");
-    log("Thinking: reviewing the profile, resume context, page text, required unanswered fields, and Education Details fields.", "Taken Over by AI");
+    const reviewCount = missing.filter(item => item.reason === "review").length;
+    log(`Found ${requiredCount} required missing field${requiredCount === 1 ? "" : "s"}, ${educationCount} Education Details field${educationCount === 1 ? "" : "s"}, and ${reviewCount} safe review field${reviewCount === 1 ? "" : "s"} for AI.`, "Taken Over by AI");
+    log("Thinking: scanning the whole page, profile, resume context, required fields, education fields, and safe optional review fields.", "Taken Over by AI");
     missing.forEach(item => log(`Thinking about ${item.reason} field: ${item.label}`, "Taken Over by AI"));
     setAiStatus("Taken Over by AI", "working");
     log("Status set to Taken Over by AI.", "Taken Over by AI");
@@ -473,6 +545,88 @@
     return { attempted: true, filled, missing: requiredMissingItems(result), status, logs };
   }
 
+  function visiblePageReviewSnapshot(result) {
+    const clean = value => String(value || "").replace(/\s+/g, " ").trim();
+    const visible = el => {
+      if (!el) return false;
+      const style = getComputedStyle(el);
+      return style.display !== "none" && style.visibility !== "hidden" && (el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    };
+    const valueFor = el => {
+      const tag = (el.tagName || "").toLowerCase();
+      const type = (el.type || "").toLowerCase();
+      if (type === "checkbox" || type === "radio") return el.checked ? "checked" : "unchecked";
+      if (tag === "select") return clean(el.selectedOptions?.[0]?.textContent || el.value || "");
+      const selectRoot = el.closest?.(".select__container, .select") || el.closest?.("[data-automation-id^='formField-']");
+      const selected = selectRoot?.querySelector?.("[class*='single-value'], [data-automation-id='selectedItem']")?.textContent;
+      if (selected) return clean(selected);
+      if (el.getAttribute?.("aria-haspopup") === "listbox" || el.getAttribute?.("role") === "combobox") return clean(el.innerText || el.textContent || "");
+      return clean(el.value || el.textContent || "");
+    };
+    const fields = Array.from(document.querySelectorAll("input, textarea, select, [role='combobox'], button[aria-haspopup='listbox']"))
+      .filter(visible)
+      .filter(el => {
+        const type = (el.type || "").toLowerCase();
+        return !["hidden", "submit", "button", "image", "reset", "file"].includes(type) || el.getAttribute?.("aria-haspopup") === "listbox";
+      })
+      .slice(0, 140)
+      .map(el => ({
+        id: el.id || "",
+        name: el.name || "",
+        label: fieldLabel(el).slice(0, 140),
+        type: el.type || el.getAttribute?.("role") || el.tagName.toLowerCase(),
+        required: isRequired(el),
+        value: valueFor(el).slice(0, 240)
+      }))
+      .filter(field => field.label || field.id || field.name || field.value);
+    const errors = Array.from(document.querySelectorAll('[aria-invalid="true"], [data-automation-id="errorMessage"], [data-automation-id="errorHeading"], [role="alert"]'))
+      .filter(visible)
+      .map(el => clean(el.innerText || el.getAttribute("aria-label") || el.id || ""))
+      .filter(Boolean)
+      .slice(0, 20);
+    return {
+      page: { url: location.href, title: document.title, formText: clean((document.querySelector("form") || document.body).innerText).slice(0, 6000) },
+      fields,
+      missing: requiredMissingItems(result).map(item => ({ id: item.id, name: item.name, label: item.label, type: item.type, reason: item.reason })),
+      errors
+    };
+  }
+
+  async function reviewPageBeforeHandoff(profile, result) {
+    const existing = result.ai || { attempted: false, filled: 0, missing: requiredMissingItems(result), logs: [] };
+    const logs = Array.isArray(existing.logs) ? [...existing.logs] : [];
+    const addLog = (line, status = "AI reviewing page", tone = "working") => {
+      logs.push(line);
+      ns.Overlay.updateAi?.({ status, tone, appendLog: line });
+    };
+    addLog("AI review: scanning the visible page before handoff.");
+    setAiStatus("AI reviewing page", "working");
+    const snapshot = visiblePageReviewSnapshot(result);
+    const fallbackComments = () => {
+      if (snapshot.errors.length) return [`Needs review: ${snapshot.errors.slice(0, 3).join(" | ")}`];
+      if (snapshot.missing.length) return [`Needs review: ${snapshot.missing.map(item => item.label).slice(0, 5).join(", ")} still appears unfilled.`];
+      return ["Page review fallback: visible required fields did not show validation errors or obvious blanks. Data on the page looks good for human review; continue if the visible values match your profile."];
+    };
+    let review;
+    try {
+      review = await new Promise(resolve => {
+        chrome.runtime.sendMessage({ type: "claudeAgent.reviewPage", payload: { profile, ...snapshot } }, response => {
+          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+          else resolve(response || { ok: false, error: "AI page review returned no response." });
+        });
+      });
+    } catch (e) {
+      review = { ok: false, error: e.message || String(e) };
+    }
+    (review?.logs || []).forEach(line => addLog(`Review: ${line}`));
+    const comments = review?.ok && review.comments?.length ? review.comments : fallbackComments();
+    comments.forEach(comment => addLog(`AI review: ${comment}`, "AI review complete", review?.ok ? "done" : "error"));
+    const status = review?.ok ? (review.handoff || "Hand over to Human") : `Hand over to Human - AI review fallback used${review?.error ? ` (${review.error})` : ""}`;
+    addLog(`Status set to ${status}.`, status, review?.ok ? "done" : "error");
+    setAiStatus(status, review?.ok ? "done" : "error");
+    return { ...existing, attempted: true, missing: requiredMissingItems(result), status, review: { ok: !!review?.ok, comments, error: review?.error || null }, logs };
+  }
+
   async function run() {
     const profile = await loadProfile();
     const url = new URL(window.location.href);
@@ -497,6 +651,12 @@
       setAiStatus(`Hand over to Human - ${e.message}`, "error");
       return { attempted: true, filled: 0, error: e.message, missing: requiredMissingItems(result) };
     });
+    result.ai = await reviewPageBeforeHandoff(profile, result).catch(e => {
+      const fallback = result.ai || { attempted: true, filled: 0, logs: [] };
+      const logs = [...(fallback.logs || []), `AI review failed: ${e.message}`];
+      setAiStatus(`Hand over to Human - AI review failed: ${e.message}`, "error");
+      return { ...fallback, status: `Hand over to Human - AI review failed: ${e.message}`, logs, review: { ok: false, comments: [], error: e.message } };
+    });
     ns.Overlay.markFilled(result.filled.map((f) => f.el));
     ns.Overlay.markUnmapped(result.unmapped);
     ns.Overlay.highlightSubmit();
@@ -517,6 +677,11 @@
   // sections that load lazily) without re-rendering the overlay each time.
   async function quietFill() {
     try {
+      if (/\.myworkdayjobs\.com$|\.workday\.com$/.test(window.location.hostname)) {
+        const auth = document.documentElement.getAttribute("data-autoapply-auth") || "";
+        const hasErrors = !!document.querySelector('[aria-invalid="true"], [data-automation-id="errorMessage"], [data-automation-id="errorHeading"]') || /\bErrors Found\b/.test(document.body?.innerText || "");
+        if (hasErrors || auth.includes("waiting:review-errors")) return null;
+      }
       const profile = await loadProfile();
       const url = new URL(window.location.href);
       const Handler = pickHandlerForPage(url);
@@ -620,7 +785,7 @@
     // section, multi-step Workday/Tesla pages, etc.). For brand-new form
     // sections (e.g. Tesla step 2) we re-run the full flow so the toast
     // reflects the new step; for incremental additions a quiet fill suffices.
-    const QUESTION_SEL = "li.application-question, .application-question, fieldset.form-group, .tds-form-item, .tds-form-fieldset, .tds-form-input-group";
+    const QUESTION_SEL = "li.application-question, .application-question, fieldset.form-group, .tds-form-item, .tds-form-fieldset, .tds-form-input-group, [data-automation-id='applyFlowMyInfoPage'], [data-automation-id='applyFlowMyExpPage'], [data-automation-id^='applyFlow']";
     let pending = false;
     let lastFieldCount = document.querySelectorAll("form input[name], form select[name], form textarea[name]").length;
     const observer = new MutationObserver((mutations) => {
@@ -638,6 +803,11 @@
       pending = true;
       setTimeout(() => {
         pending = false;
+        if (/\.myworkdayjobs\.com$|\.workday\.com$/.test(window.location.hostname)) {
+          const auth = document.documentElement.getAttribute("data-autoapply-auth") || "";
+          const hasErrors = !!document.querySelector('[aria-invalid="true"], [data-automation-id="errorMessage"], [data-automation-id="errorHeading"]') || /\bErrors Found\b/.test(document.body?.innerText || "");
+          if (hasErrors || auth.includes("waiting:review-errors")) return;
+        }
         const now = document.querySelectorAll("form input[name], form select[name], form textarea[name]").length;
         // Heuristic: if the set of named fields changed substantially (e.g.
         // a multi-step navigation replaced the form), do a full run() so the

@@ -61,12 +61,16 @@
       byAuto("addressSection_addressLine1", "address.line1");
       byAuto("addressSection_addressLine2", "address.line2");
       byAuto("addressSection_city", "address.city");
+      byAuto("addressSection_county", "address.county");
       byAuto("addressSection_countryRegion", "address.state");
       byAuto("addressSection_postalCode", "address.postalCode");
       byAuto("address--addressLine1", "address.line1");
       byAuto("address--addressLine2", "address.line2");
       byAuto("address--city", "address.city");
+      byAuto("address--county", "address.county");
+      byAuto("address--regionSubdivision1", "address.county");
       byAuto("address--postalCode", "address.postalCode");
+      byAuto("county", "address.county");
       byAuto("countryDropdown", "address.country");
       // Phone: keep local + country code in dedicated fields. The generic
       // "phone" key would leak "+1 571-635-2506" into all three Workday
@@ -82,7 +86,35 @@
       byAuto("personalInformationEthnicity", "demographics.ethnicity");
       byAuto("personalInformationVeteranStatus", "demographics.veteranStatus");
       byAuto("personalInformationDisabilityStatus", "demographics.disabilityStatus");
+      // ----- My Experience (step 3) -----
+      byAuto("jobTitle", "experience.0.title");
+      byAuto("companyName", "experience.0.company");
+      byAuto("company", "experience.0.company");
+      byAuto("workExperienceLocation", "experience.0.location");
+      byAuto("location", "experience.0.location");
+      byAuto("roleDescription", "experience.0.description");
+      byAuto("description", "experience.0.description");
+      byAuto("schoolName", "education.0.school");
+      byAuto("school", "education.0.school");
+      byAuto("degree", "education.0.degree");
+      byAuto("fieldOfStudy", "education.0.fieldOfStudy");
+      byAuto("discipline", "education.0.fieldOfStudy");
+      byAuto("gpa", "education.0.gpa");
+      byAuto("url", "links.linkedin");
+      byAuto("socialNetworkAccounts--linkedInAccount", "links.linkedin");
+      byAuto("linkedInAccount", "links.linkedin");
+      byAuto("socialNetworkAccounts--twitterAccount", "links.twitter");
+      byAuto("twitterAccount", "links.twitter");
+      byAuto("socialNetworkAccounts--facebookAccount", "links.facebook");
+      byAuto("facebookAccount", "links.facebook");
       return map;
+    }
+
+    findFields() {
+      return super.findFields().filter(el => {
+        const text = `${el.id || ""} ${el.name || ""} ${el.getAttribute?.("data-automation-id") || ""}`;
+        return !/^(workExperience|education)-\d+--/i.test(text);
+      });
     }
 
     async fill() {
@@ -163,6 +195,11 @@
       // 3. Fill all currently-visible fields via the standard pipeline.
       const result = await super.fill();
 
+      // Undo stale/broad social autofill on Workday. The Social Network URLs
+      // wrapper contains LinkedIn/Twitter/Facebook text together, so older
+      // matching could copy LinkedIn into empty Twitter/Facebook fields.
+      this._clearEmptySocialLinks(result);
+
       // 3b. Password inputs in Workday are React-controlled with an
       // own-property tracker that isn't callable from an isolated content
       // script. Re-fill them via the background's chrome.scripting
@@ -170,7 +207,14 @@
       await this._fillPasswordsMainWorld();
 
       // 3c. Workday's Country / State / Phone Type are custom button-widgets.
-      await this._fillWorkdayDropdowns();
+      await this._fillWorkdayDropdowns(result);
+      await this._fillMyInformationDirect(result);
+      this._fillPreviousWorkerRadio(result);
+
+      // 3d. Workday's "My Experience" page is made of repeatable React
+      // sections whose field labels/automation ids vary by tenant. Scan the
+      // live DOM and fill visible/open work, education, and link blocks.
+      await this._fillMyExperience(result);
 
       // 4. Auth gate ─ auto-submit Sign In or Create Account.
       // All state is in sessionStorage ("aa_*") so it survives cross-page
@@ -281,6 +325,21 @@
         window.__autoApplyWorkdayPaused = true; // stop the loop until user resumes
       }
 
+      if (this._visibleNextButton() && !this._isAuthGate() && this._hasValidationErrors()) {
+        document.documentElement.setAttribute("data-autoapply-auth", "waiting:review-errors");
+        window.__autoApplyWorkdayDriver = false;
+      }
+
+      // On normal application form steps, fill once and then stand down.
+      // Keeping the driver alive causes repeated focus/scrollIntoView calls
+      // from React-controlled fields and dropdowns, which pulls the user back
+      // while they are trying to review or scroll. Mutation/navigation or a
+      // manual Re-scan will start a fresh driver on the next step.
+      if (this._visibleNextButton() && !this._isAuthGate() && !this._hasValidationErrors() && !this._myExperiencePendingRepeatables()) {
+        document.documentElement.setAttribute("data-autoapply-auth", "waiting:next");
+        window.__autoApplyWorkdayDriver = false;
+      }
+
       // Refresh overlay marks after a tick.
       try {
         if (ns.Overlay && result?.filled?.length) {
@@ -337,9 +396,29 @@
             inflight = false;
           }
         }
+        if (!window.__autoApplyWorkdayDriver) return;
         setTimeout(tick, TICK_MS);
       };
       setTimeout(tick, TICK_MS);
+    }
+
+    _visibleNextButton() {
+      const btn = document.querySelector('[data-automation-id="pageFooterNextButton"]') ||
+        Array.from(document.querySelectorAll("button, [role='button']")).find(el => this._isVisible(el) && /^(next|save and continue|continue)$/i.test((el.innerText || el.textContent || "").trim()));
+      return !!(btn && this._isVisible(btn) && !btn.disabled);
+    }
+
+    _isAuthGate() {
+      return !!(
+        document.querySelector('[data-automation-id="signInSubmitButton"]') ||
+        document.querySelector('[data-automation-id="createAccountSubmitButton"]') ||
+        document.querySelector('[data-automation-id="SignInWithEmailButton"]')
+      );
+    }
+
+    _hasValidationErrors() {
+      if (document.querySelector('[aria-invalid="true"], [data-automation-id="errorMessage"], [data-automation-id="errorHeading"]')) return true;
+      return /\bErrors Found\b/.test(document.body?.innerText || "");
     }
 
     /**
@@ -532,22 +611,63 @@
       if (!targetText) return false;
       const wrapper = document.querySelector(`[data-automation-id="${autoId}"]`);
       if (!wrapper) return false;
-      const cur = (wrapper.innerText || "").toLowerCase();
-      if (cur && cur.includes(targetText.toLowerCase()) && !/select one/i.test(cur)) return true;
+      const normalizedTarget = this._normalizeText(targetText);
+      const cur = this._normalizeText(wrapper.innerText || "");
+      if (cur && cur.includes(normalizedTarget) && !/select one/i.test(cur)) return true;
       const trigger = wrapper.querySelector("button, [aria-haspopup]") || wrapper;
       await this._realClick(trigger);
       const popupSelector = '[data-automation-widget="wd-popup"] [role="option"], [role="listbox"] [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]';
-      const start = Date.now();
-      let options = [];
-      while (Date.now() - start < 2500) {
-        await new Promise((r) => setTimeout(r, 100));
-        options = Array.from(document.querySelectorAll(popupSelector)).filter((o) => o.offsetParent !== null);
-        if (options.length) break;
+      const visibleOptions = () => Array.from(document.querySelectorAll(popupSelector)).filter((o) => this._isVisible(o));
+      const chooseOption = (options) => {
+        let match = options.find((o) => this._normalizeText(o.innerText || "") === normalizedTarget);
+        if (!match) match = options.find((o) => {
+          const text = this._normalizeText(o.innerText || "");
+          return text && normalizedTarget.length >= 2 && (text.includes(normalizedTarget) || normalizedTarget.includes(text));
+        });
+        return match || null;
+      };
+      const waitForOptions = async (ms = 1800) => {
+        const start = Date.now();
+        let options = [];
+        while (Date.now() - start < ms) {
+          await new Promise((r) => setTimeout(r, 100));
+          options = visibleOptions();
+          if (options.length) break;
+        }
+        return options;
+      };
+      const searchQueries = () => {
+        const queries = [];
+        const add = (value) => {
+          const raw = String(value || "").trim();
+          const normalized = this._normalizeText(raw);
+          for (const query of [raw, normalized]) if (query && !queries.includes(query)) queries.push(query);
+        };
+        add(targetText);
+        const words = normalizedTarget.split(" ").filter(Boolean);
+        words.forEach(add);
+        for (let index = 1; index <= Math.min(normalizedTarget.length, 12); index += 1) add(normalizedTarget.slice(0, index));
+        words.forEach(word => {
+          for (let index = 1; index <= Math.min(word.length, 8); index += 1) add(word.slice(0, index));
+        });
+        return queries;
+      };
+      let options = await waitForOptions();
+      let match = chooseOption(options);
+      if (!match) {
+        const popup = document.querySelector('[data-automation-widget="wd-popup"], [role="listbox"]') || document;
+        const searchInput = Array.from(popup.querySelectorAll("input, [contenteditable='true']"))
+          .find(el => this._isVisible(el));
+        if (searchInput) {
+          for (const query of searchQueries()) {
+            ns.FormFiller.fillField(searchInput, query);
+            await new Promise((r) => setTimeout(r, 350));
+            options = visibleOptions();
+            match = chooseOption(options);
+            if (match) break;
+          }
+        }
       }
-      if (!options.length) return false;
-      const t = targetText.toLowerCase();
-      let match = options.find((o) => (o.innerText || "").trim().toLowerCase() === t);
-      if (!match) match = options.find((o) => (o.innerText || "").toLowerCase().includes(t));
       if (!match) {
         await this._realClick(trigger);
         return false;
@@ -589,12 +709,657 @@
       }
     }
 
-    async _fillWorkdayDropdowns() {
+    async _fillWorkdayDropdowns(result) {
       const p = this.profile || {};
       const addr = p.address || {};
+      await this._fillWorkdaySourceWithAi(result);
       await this._selectWorkdayDropdown("formField-country", addr.country);
       await this._selectWorkdayDropdown("formField-countryRegion", addr.state);
       await this._selectWorkdayDropdown("formField-phoneType", p.phoneType);
+      await this._fillCountyField(result);
+    }
+
+    async _workdayDropdownOptions(autoId) {
+      const wrapper = document.querySelector(`[data-automation-id="${autoId}"]`);
+      if (!wrapper) return [];
+      try { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape", code: "Escape", keyCode: 27 })); } catch (_) {}
+      const trigger = wrapper.querySelector('[data-automation-id="promptIcon"], input[id], button, [aria-haspopup]') || wrapper;
+      await this._realClick(trigger);
+      try { trigger.focus?.(); } catch (_) {}
+      const input = wrapper.querySelector("input[id]");
+      if (autoId === "formField-source" && input) {
+        ns.FormFiller.fillField(input, "recruiter");
+      }
+      const popupSelector = '[data-automation-widget="wd-popup"] [role="option"], [role="listbox"] [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]';
+      const start = Date.now();
+      let options = [];
+      while (Date.now() - start < 1800) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        options = Array.from(document.querySelectorAll(popupSelector))
+          .filter(el => this._isVisible(el))
+          .map(el => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+        if (autoId === "formField-source") {
+          options = options.filter(option => /recruiter|staffing|referral|worker|contractor|job site|social media|contacted/i.test(option));
+        }
+        if (options.length) break;
+      }
+      try { trigger.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape", code: "Escape", keyCode: 27 })); } catch (_) {}
+      return Array.from(new Set(options));
+    }
+
+    async _selectWorkdayPrompt(autoId, targetText) {
+      const wrapper = document.querySelector(`[data-automation-id="${autoId}"]`);
+      if (!wrapper || !targetText) return false;
+      const input = wrapper.querySelector('input[id]');
+      const trigger = wrapper.querySelector('[data-automation-id="promptIcon"]') || input || wrapper;
+      try { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape", code: "Escape", keyCode: 27 })); } catch (_) {}
+      await this._realClick(trigger);
+      try { input?.focus?.(); } catch (_) {}
+      const popupSelector = '[data-automation-widget="wd-popup"] [role="option"], [role="listbox"] [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"], [role="option"]';
+      const normalizedTargets = this._optionTargetAlternates(targetText).map(value => this._normalizeText(value));
+      const visibleOptions = () => Array.from(document.querySelectorAll(popupSelector)).filter(el => this._isVisible(el));
+      const choose = () => visibleOptions().filter(option => {
+        if (autoId !== "formField-source") return true;
+        return /recruiter|staffing|referral|worker|contractor|job site|social media|contacted/i.test(option.innerText || option.textContent || "");
+      }).find(option => {
+        const text = this._normalizeText(option.innerText || option.textContent || "");
+        return text && normalizedTargets.some(target => text === target || text.includes(target) || target.includes(text));
+      });
+      let match = null;
+      const queries = this._optionTargetAlternates(targetText);
+      for (const query of queries) {
+        if (input) {
+          ns.FormFiller.fillField(input, query);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        match = choose();
+        if (match) break;
+      }
+      if (!match) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        match = choose();
+      }
+      if (!match) return false;
+      await this._realClick(match);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return /\b1 item selected\b|\bitems selected\b/i.test(wrapper.innerText || "") || this._normalizeText(wrapper.innerText || "").includes(this._normalizeText(targetText));
+    }
+
+    async _fillWorkdaySourceWithAi(result) {
+      const wrapper = document.querySelector('[data-automation-id="formField-source"]');
+      if (!wrapper) return false;
+      const options = await this._workdayDropdownOptions("formField-source");
+      if (!options.length) return false;
+      let value = "";
+      let aiError = "";
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "claudeAgent.fillMissingFields",
+          payload: {
+            profile: this.profile || {},
+            resumeText: this.profile?.resumeText || this.profile?.resumeSummary || "",
+            page: { url: location.href, title: document.title, formText: (document.body?.innerText || "").slice(0, 3000) },
+            fields: [{
+              id: "workday-source",
+              name: "source",
+              label: "How did you hear about this job? Choose the best exact dropdown option. Prefer recruiter, talent acquisition, sourcer, reached out, or contacted options. Avoid LinkedIn, job board, and job site options when any recruiter-style option exists.",
+              type: "dropdown",
+              options,
+              reason: "required"
+            }]
+          }
+        });
+        aiError = response?.ok === false ? (response.error || "AI source choice failed") : "";
+        value = response?.actions?.find(action => action.type === "fill" || !action.type)?.value || "";
+      } catch (e) {
+        aiError = e?.message || "AI source choice unavailable";
+      }
+      if (!value) {
+        value = this._fallbackSourceOption(options);
+        if (value) ns.Overlay?.updateAi?.({ appendLog: `AI source choice unavailable${aiError ? `: ${aiError}` : ""}. Selected best visible source option: ${value}.` });
+      }
+      if (!value) return false;
+      const ok = await this._selectWorkdayPrompt("formField-source", value) || await this._selectWorkdayDropdown("formField-source", value);
+      if (ok) this._recordFill(result, wrapper, "applicationSource", value);
+      return ok;
+    }
+
+    _fallbackSourceOption(options) {
+      const unique = Array.from(new Set((options || []).map(option => String(option || "").trim()).filter(Boolean)));
+      const recruiter = unique.find(option => /recruiter|talent acquisition|sourcer|contacted|reached out/i.test(option) && !/job site|job board|linkedin/i.test(option));
+      if (recruiter) return recruiter;
+      return unique.find(option => !/job site|job board|linkedin/i.test(option)) || "";
+    }
+
+    async _fillCountyField(result) {
+      const county = this.profile?.address?.county;
+      if (!county) return false;
+      return this._fillFieldByPatterns(result, "address.county", county, [/^county$/, /\bcounty\b/], document, { includeFilled: true });
+    }
+
+    async _fillMyInformationDirect(result) {
+      const addr = this.profile?.address || {};
+      const fields = [
+        ["name--legalName--firstName", "firstName", this.profile?.firstName],
+        ["name--legalName--lastName", "lastName", this.profile?.lastName],
+        ["address--addressLine1", "address.line1", addr.line1],
+        ["address--addressLine2", "address.line2", addr.line2],
+        ["address--city", "address.city", addr.city],
+        ["address--postalCode", "address.postalCode", addr.postalCode],
+        ["address--regionSubdivision1", "address.county", addr.county],
+        ["address--county", "address.county", addr.county],
+        ["phoneNumber--phoneNumber", "phoneLocal", this.profile?.phoneLocal]
+      ];
+      for (const [id, key, value] of fields) {
+        await this._fillGeneratedInput(result, key, id, value);
+      }
+    }
+
+    _fillPreviousWorkerRadio(result) {
+      const value = String(this.profile?.previouslyEmployed || "No").toLowerCase().startsWith("y") ? "true" : "false";
+      const el = document.querySelector(`input[type="radio"][name="candidateIsPreviousWorker"][value="${value}"]`);
+      if (!el || el.checked) return !!el?.checked;
+      el.click();
+      if (!el.checked) {
+        el.checked = true;
+        el.setAttribute("aria-checked", "true");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (el.checked) this._recordFill(result, el, "previouslyEmployed", this.profile?.previouslyEmployed || "No");
+      return el.checked;
+    }
+
+    _isVisible(el) {
+      if (!el) return false;
+      const style = window.getComputedStyle?.(el);
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      return !!(el.offsetParent || el.getClientRects?.().length);
+    }
+
+    _normalizeText(value) {
+      return String(value || "")
+        .replace(/[’']/g, "")
+        .replace(/[^a-z0-9]+/gi, " ")
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, " ");
+    }
+
+    _hasValue(el) {
+      if (!el) return false;
+      const type = (el.type || "").toLowerCase();
+      if (type === "checkbox" || type === "radio") return !!el.checked;
+      if (type === "file") return !!el.files?.length;
+      return !!String(el.value || el.textContent || "").trim();
+    }
+
+    _fieldText(el) {
+      const parts = [];
+      const { FieldMatcher } = ns;
+      try { parts.push(FieldMatcher.collectLabelText(el) || ""); } catch (_) {}
+      parts.push(el?.getAttribute?.("aria-label") || "");
+      parts.push(el?.getAttribute?.("data-automation-id") || "");
+      parts.push(el?.name || "", el?.id || "", el?.placeholder || "");
+      let node = el?.closest?.("[data-automation-id^='formField-'], [data-automation-id*='Experience'], [data-automation-id*='Education'], [role='group'], fieldset, section, div");
+      let hops = 0;
+      while (node && hops < 2) {
+        parts.push(node.getAttribute?.("data-automation-id") || "");
+        parts.push((node.innerText || node.textContent || "").slice(0, 300));
+        node = node.parentElement;
+        hops += 1;
+      }
+      return this._normalizeText(parts.join(" "));
+    }
+
+    _dateValue(date, mode = "full") {
+      if (!date) return "";
+      const match = String(date).match(/^(\d{4})(?:-(\d{1,2}))?/);
+      if (!match) return String(date);
+      const year = match[1];
+      const month = match[2] ? match[2].padStart(2, "0") : "";
+      if (mode === "year") return year;
+      if (mode === "month") return month;
+      if (mode === "monthYear") return month ? `${month}/${year}` : year;
+      return month ? `${year}-${month}` : year;
+    }
+
+    _allFillables(scope = document) {
+      return Array.from(scope.querySelectorAll("input, select, textarea, [contenteditable='true']"))
+        .filter(el => ns.FormFiller.isFillable(el) && this._isVisible(el));
+    }
+
+    _entryPrefixes(kind) {
+      const regex = kind === "education" ? /^(education-\d+)--/ : /^(workExperience-\d+)--/;
+      const seen = new Set();
+      const prefixes = [];
+      document.querySelectorAll("input, textarea, select, button").forEach(el => {
+        const match = String(el.id || "").match(regex);
+        if (match && !seen.has(match[1])) {
+          seen.add(match[1]);
+          prefixes.push(match[1]);
+        }
+      });
+      return prefixes;
+    }
+
+    async _fillGeneratedInput(result, key, id, value) {
+      if (value == null || value === "") return false;
+      const el = document.getElementById(id);
+      if (!el || !this._isVisible(el)) return false;
+      const ok = await ns.FormFiller.fillInputMainWorld(el, value) || ns.FormFiller.fillField(el, value);
+      if (ok) this._recordFill(result, el, key, value);
+      return ok;
+    }
+
+    async _fillGeneratedDate(result, keyPrefix, prefix, date, includeMonth = true) {
+      if (!prefix || !date) return false;
+      const month = this._dateValue(date, "month");
+      const year = this._dateValue(date, "year");
+      let ok = false;
+      if (includeMonth && month) ok = await this._fillGeneratedInput(result, `${keyPrefix}.month`, `${prefix}-dateSectionMonth-input`, month) || ok;
+      if (year) ok = await this._fillGeneratedInput(result, `${keyPrefix}.year`, `${prefix}-dateSectionYear-input`, year) || ok;
+      return ok;
+    }
+
+    _checkGeneratedCheckbox(result, key, id, expectedChecked) {
+      const el = document.getElementById(id);
+      if (!el || !this._isVisible(el)) return false;
+      if (!!el.checked !== !!expectedChecked) {
+        el.click();
+        if (!!el.checked !== !!expectedChecked) {
+          el.checked = !!expectedChecked;
+          el.setAttribute("aria-checked", String(!!expectedChecked));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+      if (!!el.checked === !!expectedChecked) this._recordFill(result, el, key, expectedChecked);
+      return !!el.checked === !!expectedChecked;
+    }
+
+    _findField(patterns, scope = document, { includeFilled = false } = {}) {
+      const regexes = patterns.map(p => p instanceof RegExp ? p : new RegExp(p, "i"));
+      return this._allFillables(scope).find(el => {
+        if (!includeFilled && this._hasValue(el)) return false;
+        if (arguments[2]?.idPattern) {
+          const idText = `${el.id || ""} ${el.name || ""} ${el.getAttribute?.("data-automation-id") || ""}`;
+          if (!arguments[2].idPattern.test(idText)) return false;
+        }
+        const text = this._fieldText(el);
+        return regexes.some(re => re.test(text));
+      }) || null;
+    }
+
+    _recordFill(result, el, key, value) {
+      if (!result || !el) return;
+      if (!result.filled.some(item => item.el === el)) result.filled.push({ el, key, value });
+      result.unmapped = (result.unmapped || []).filter(item => item !== el);
+      result.skipped = (result.skipped || []).filter(item => item.el !== el);
+    }
+
+    async _fillFieldByPatterns(result, key, value, patterns, scope = document, options = {}) {
+      if (value == null || value === "") return false;
+      const el = this._findField(patterns, scope, options);
+      if (!el) return false;
+      const type = (el.type || "").toLowerCase();
+      const tag = (el.tagName || "").toLowerCase();
+      let ok = false;
+      if (type === "checkbox") {
+        if (!el.checked) ok = this.checkCheckbox(el);
+        else ok = true;
+      } else if ((tag === "input" || tag === "textarea") && el.getAttribute?.("data-automation-id")) {
+        ok = await ns.FormFiller.fillInputMainWorld(el, value);
+        if (!ok) ok = ns.FormFiller.fillField(el, value);
+      } else {
+        ok = ns.FormFiller.fillField(el, value);
+      }
+      if (ok) this._recordFill(result, el, key, value);
+      return ok;
+    }
+
+    async _clickAddButton(sectionWords) {
+      const words = sectionWords.map(word => this._normalizeText(word));
+      const buttons = Array.from(document.querySelectorAll("button, [role='button']"))
+        .filter(btn => this._isVisible(btn));
+      const positioned = this._sectionAddButton(buttons, words);
+      const btn = positioned || buttons.find(btn => {
+        const ownText = this._normalizeText(`${btn.innerText || btn.textContent || ""} ${btn.getAttribute?.("aria-label") || ""} ${btn.getAttribute?.("data-automation-id") || ""}`);
+        if (!/\b(add|new|add button)\b/.test(ownText)) return false;
+        if (words.some(word => ownText.includes(word))) return true;
+        let node = btn.parentElement;
+        for (let hops = 0; node && hops < 5; hops += 1, node = node.parentElement) {
+          const text = this._normalizeText(node.innerText || node.textContent || "");
+          if (text.length > 180) continue;
+          if (/\b(add|new)\b/.test(text) && words.some(word => text.includes(word))) return true;
+        }
+        return false;
+      });
+      if (!btn) return false;
+      try { btn.click(); } catch (_) {}
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (!this._workdaySectionOpened(sectionWords)) await this._realClick(btn);
+      await new Promise(resolve => setTimeout(resolve, 900));
+      return true;
+    }
+
+    _sectionAddButton(buttons, words) {
+      const addButtons = buttons.filter(btn => /\b(add|new|add another|add button)\b/i.test(btn.innerText || btn.textContent || btn.getAttribute?.("aria-label") || btn.getAttribute?.("data-automation-id") || ""));
+      if (!addButtons.length) return null;
+      const sectionHints = Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading'], legend, label, div, span"))
+        .filter(el => this._isVisible(el))
+        .map(el => ({ el, text: this._normalizeText(el.innerText || el.textContent || ""), y: el.getBoundingClientRect().top }))
+        .filter(item => item.text && item.text.length <= 80);
+      const topFor = patterns => {
+        const match = sectionHints.find(item => patterns.some(pattern => pattern.test(item.text)));
+        return match ? match.y : null;
+      };
+      let start = null;
+      let end = null;
+      if (words.some(word => /work|experience|employment/.test(word))) {
+        start = topFor([/\bwork experience\b/, /\bemployment\b/]);
+        end = topFor([/\beducation\b/, /\bschool\b/]);
+      } else if (words.some(word => /education|school/.test(word))) {
+        start = topFor([/\beducation\b/, /\bschool\b/]);
+        end = topFor([/\bresume\b/, /\bwebsites?\b/, /\bsocial\b/]);
+      }
+      if (start == null) return null;
+      return addButtons.find(btn => {
+        const y = btn.getBoundingClientRect().top;
+        return y > start && (end == null || y < end);
+      }) || null;
+    }
+
+    _workdaySectionOpened(sectionWords) {
+      const words = sectionWords.map(word => this._normalizeText(word)).join(" ");
+      const fields = this._allFillables(document);
+      if (/work|experience|employment/.test(words)) {
+        return fields.some(el => /workExperience|jobTitle|companyName|roleDescription/.test(`${el.id || ""} ${el.name || ""} ${el.getAttribute?.("data-automation-id") || ""}`));
+      }
+      if (/education|school/.test(words)) {
+        return fields.some(el => /education|school|degree|fieldOfStudy|gpa/.test(`${el.id || ""} ${el.name || ""} ${el.getAttribute?.("data-automation-id") || ""}`));
+      }
+      return false;
+    }
+
+    _myExperiencePendingRepeatables() {
+      const text = this._normalizeText(document.body?.innerText || "");
+      if (!/current step \d+ of \d+ my experience|my experience/.test(text)) return false;
+      const needsWork = !this._workdaySectionOpened(["work experience"]);
+      const needsEducation = !this._workdaySectionOpened(["education"]);
+      if (!needsWork && !needsEducation) return false;
+      return Array.from(document.querySelectorAll('button, [role="button"]'))
+        .filter(btn => this._isVisible(btn))
+        .some(btn => {
+          const ownText = this._normalizeText(`${btn.innerText || btn.textContent || ""} ${btn.getAttribute?.("aria-label") || ""} ${btn.getAttribute?.("data-automation-id") || ""}`);
+          if (!/\b(add|new|add button)\b/.test(ownText)) return false;
+          let node = btn.parentElement;
+          for (let hops = 0; node && hops < 5; hops += 1, node = node.parentElement) {
+            const sectionText = this._normalizeText(node.innerText || node.textContent || "");
+            if (sectionText.length > 180) continue;
+            if (needsWork && /work experience|employment/.test(sectionText)) return true;
+            if (needsEducation && /education|school/.test(sectionText)) return true;
+          }
+          return false;
+        });
+    }
+
+    async _selectDropdownByPatterns(patterns, targetText, scope = document) {
+      if (!targetText) return false;
+      const regexes = patterns.map(p => p instanceof RegExp ? p : new RegExp(p, "i"));
+      const wrappers = Array.from(scope.querySelectorAll("[data-automation-id^='formField-'], [data-automation-id*='Field'], [role='combobox'], [aria-haspopup='listbox']"))
+        .filter(el => this._isVisible(el));
+      const wrapper = wrappers.find(el => regexes.some(re => re.test(this._fieldText(el))));
+      if (!wrapper) return false;
+      const autoId = wrapper.getAttribute?.("data-automation-id");
+      if (autoId) return this._selectWorkdayDropdown(autoId, targetText);
+      const trigger = wrapper.querySelector?.("button, [aria-haspopup]") || wrapper;
+      await this._realClick(trigger);
+      return false;
+    }
+
+    _optionTargetAlternates(targetText) {
+      const raw = String(targetText || "").trim();
+      if (!raw) return [];
+      const normalized = this._normalizeText(raw);
+      const values = [raw];
+      const add = value => {
+        if (value && !values.some(existing => this._normalizeText(existing) === this._normalizeText(value))) values.push(value);
+      };
+      if (/computer (science|engineering)|software engineering|computer information/i.test(normalized)) {
+        add("Computer and Information Science");
+      }
+      if (/master|m\.?s\.?|ms\b/i.test(normalized)) {
+        add("Masters Degree");
+        add("Master's Degree");
+        add("Master of Science");
+      }
+      if (/bachelor|b\.?tech|btech/i.test(normalized)) {
+        add("Bachelors Degree");
+        add("Bachelor's Degree");
+        add("Bachelor of Science");
+      }
+      return values;
+    }
+
+    async _selectWorkdayTrigger(trigger, targetText) {
+      if (!trigger || !targetText) return false;
+      const targets = this._optionTargetAlternates(targetText);
+      const normalizedTargets = targets.map(value => this._normalizeText(value)).filter(Boolean);
+      const currentText = this._normalizeText(trigger.innerText || trigger.textContent || trigger.getAttribute?.("aria-label") || "");
+      if (currentText && normalizedTargets.some(target => currentText.includes(target)) && !/select one/i.test(currentText)) return true;
+      await this._realClick(trigger);
+      const popupSelector = '[data-automation-widget="wd-popup"] [role="option"], [role="listbox"] [role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]';
+      const visibleOptions = () => Array.from(document.querySelectorAll(popupSelector)).filter((o) => this._isVisible(o));
+      const chooseOption = (options) => {
+        let match = options.find((o) => normalizedTargets.includes(this._normalizeText(o.innerText || "")));
+        if (!match) match = options.find((o) => {
+          const text = this._normalizeText(o.innerText || "");
+          return text && normalizedTargets.some(target => target.length >= 2 && (text.includes(target) || target.includes(text)));
+        });
+        return match || null;
+      };
+      const waitForOptions = async (ms = 1800) => {
+        const start = Date.now();
+        let options = [];
+        while (Date.now() - start < ms) {
+          await new Promise((r) => setTimeout(r, 100));
+          options = visibleOptions();
+          if (options.length) break;
+        }
+        return options;
+      };
+      const queries = [];
+      const addQuery = (value) => {
+        const raw = String(value || "").trim();
+        const normalized = this._normalizeText(raw);
+        for (const query of [raw, normalized]) if (query && !queries.includes(query)) queries.push(query);
+      };
+      targets.forEach(addQuery);
+      const words = normalizedTargets.join(" ").split(" ").filter(Boolean);
+      words.forEach(addQuery);
+      normalizedTargets.forEach(target => {
+        for (let index = 1; index <= Math.min(target.length, 12); index += 1) addQuery(target.slice(0, index));
+      });
+      words.forEach(word => {
+        for (let index = 1; index <= Math.min(word.length, 8); index += 1) addQuery(word.slice(0, index));
+      });
+
+      let options = await waitForOptions();
+      let match = chooseOption(options);
+      if (!match) {
+        const popup = document.querySelector('[data-automation-widget="wd-popup"], [role="listbox"]') || document;
+        const searchInput = Array.from(popup.querySelectorAll("input, [contenteditable='true']"))
+          .find(el => this._isVisible(el));
+        if (searchInput) {
+          for (const query of queries) {
+            ns.FormFiller.fillField(searchInput, query);
+            await new Promise((r) => setTimeout(r, 350));
+            options = visibleOptions();
+            match = chooseOption(options);
+            if (match) break;
+          }
+        }
+      }
+      if (!match) {
+        await this._realClick(trigger);
+        return false;
+      }
+      await this._realClick(match);
+      await new Promise((r) => setTimeout(r, 250));
+      return true;
+    }
+
+    async _selectDropdownByIdPattern(idPattern, targetText) {
+      if (!targetText) return false;
+      const trigger = Array.from(document.querySelectorAll("button[aria-haspopup='listbox'], [role='combobox'], [aria-haspopup='listbox']"))
+        .filter(el => this._isVisible(el))
+        .find(el => idPattern.test(`${el.id || ""} ${el.name || ""} ${el.getAttribute?.("data-automation-id") || ""}`));
+      if (!trigger) return false;
+      return this._selectWorkdayTrigger(trigger, targetText);
+    }
+
+    async _fillExperienceEntry(result, exp, index = 0, prefix = null) {
+      if (!exp) return;
+      const title = exp.title || (index === 0 ? this.profile?.currentTitle : "");
+      const company = exp.company || (index === 0 ? this.profile?.currentCompany : "");
+      const idFor = suffix => prefix ? new RegExp(`^${prefix}--${suffix}`, "i") : new RegExp(`workExperience-\\d+--${suffix}`, "i");
+      await this._fillFieldByPatterns(result, `experience.${index}.title`, title, [/job title|position title|role title|title\b/], document, { includeFilled: true, idPattern: idFor("jobTitle") });
+      await this._fillFieldByPatterns(result, `experience.${index}.company`, company, [/company|employer|organization/], document, { includeFilled: true, idPattern: idFor("companyName") });
+      await this._fillFieldByPatterns(result, `experience.${index}.location`, exp.location, [/location|city|work location/], document, { includeFilled: true, idPattern: idFor("location") });
+      await this._fillFieldByPatterns(result, `experience.${index}.description`, exp.description, [/description|responsibilities|role description|summary|achievements/], document, { includeFilled: true, idPattern: idFor("roleDescription") });
+      if (prefix) {
+        this._checkGeneratedCheckbox(result, `experience.${index}.current`, `${prefix}--currentlyWorkHere`, !!exp.current);
+        await this._fillGeneratedDate(result, `experience.${index}.startDate`, `${prefix}--startDate`, exp.startDate, true);
+        if (!exp.current) await this._fillGeneratedDate(result, `experience.${index}.endDate`, `${prefix}--endDate`, exp.endDate, true);
+      } else {
+        await this._fillFieldByPatterns(result, `experience.${index}.current`, exp.current ? "Yes" : "No", [/currently work|i currently|current role|present/], document, { includeFilled: true, idPattern: idFor("currentlyWorkHere") });
+      }
+      await this._selectDropdownByPatterns([/start month|from month/], this._dateValue(exp.startDate, "month"));
+      await this._selectDropdownByPatterns([/start year|from year/], this._dateValue(exp.startDate, "year"));
+      if (!exp.current) {
+        await this._selectDropdownByPatterns([/end month|to month/], this._dateValue(exp.endDate, "month"));
+        await this._selectDropdownByPatterns([/end year|to year/], this._dateValue(exp.endDate, "year"));
+      }
+    }
+
+    async _ensureWorkEntries(count) {
+      let prefixes = this._entryPrefixes("workExperience");
+      while (prefixes.length < count) {
+        const before = prefixes.length;
+        if (!(await this._clickAddButton(["work experience", "experience", "employment"]))) break;
+        prefixes = this._entryPrefixes("workExperience");
+        if (prefixes.length <= before) break;
+      }
+      return prefixes;
+    }
+
+    async _fillEducationEntry(result, edu, index = 0, prefix = null) {
+      if (!edu) return;
+      const base = prefix ? new RegExp(`^${prefix}--`) : /education-\d+--/i;
+      const idFor = suffix => prefix ? new RegExp(`^${prefix}--${suffix}`, "i") : new RegExp(`education-\\d+--${suffix}`, "i");
+      await this._fillFieldByPatterns(result, `education.${index}.school`, edu.school, [/school|university|college|institution/], document, { includeFilled: true, idPattern: idFor("school") });
+      await this._fillFieldByPatterns(result, `education.${index}.fieldOfStudy`, edu.fieldOfStudy, [/field of study|major|discipline|area of study/], document, { includeFilled: true, idPattern: idFor("fieldOfStudy") });
+      await this._fillFieldByPatterns(result, `education.${index}.gpa`, edu.gpa, [/gpa|grade point|overall result/], document, { includeFilled: true, idPattern: idFor("gradeAverage") });
+      if (prefix) {
+        await this._fillGeneratedDate(result, `education.${index}.startDate`, `${prefix}--firstYearAttended`, edu.startDate, false);
+        await this._fillGeneratedDate(result, `education.${index}.endDate`, `${prefix}--lastYearAttended`, edu.endDate, false);
+      } else {
+        await this._fillFieldByPatterns(result, `education.${index}.startDate`, this._dateValue(edu.startDate, "year"), [/start date|first year|from date|attended from/], document, { includeFilled: true, idPattern: idFor("firstYearAttended") });
+        await this._fillFieldByPatterns(result, `education.${index}.endDate`, this._dateValue(edu.endDate, "year"), [/end date|last year|graduation|attended to/], document, { includeFilled: true, idPattern: idFor("lastYearAttended") });
+      }
+      await this._selectDropdownByIdPattern(idFor("degree"), edu.degree);
+      await this._selectDropdownByIdPattern(idFor("fieldOfStudy"), edu.fieldOfStudy);
+      await this._selectDropdownByIdPattern(idFor("firstYearAttended"), this._dateValue(edu.startDate, "year"));
+      await this._selectDropdownByIdPattern(idFor("lastYearAttended"), this._dateValue(edu.endDate, "year"));
+      return base;
+    }
+
+    async _ensureEducationEntries(count) {
+      let prefixes = this._entryPrefixes("education");
+      while (prefixes.length < count) {
+        const before = prefixes.length;
+        if (!(await this._clickAddButton(["education", "school"]))) break;
+        prefixes = this._entryPrefixes("education");
+        if (prefixes.length <= before) break;
+      }
+      return prefixes;
+    }
+
+    async _fillLinks(result) {
+      const links = this.profile?.links || {};
+      if (links.linkedin) {
+        await this._fillFieldByPatterns(result, "links.linkedin", links.linkedin, [/linkedin|linked in/]);
+      }
+      if (links.github) {
+        await this._fillFieldByPatterns(result, "links.github", links.github, [/github|git hub/]);
+      }
+      if (links.portfolio) {
+        await this._fillFieldByPatterns(result, "links.portfolio", links.portfolio, [/portfolio/]);
+      }
+      if (links.website) {
+        await this._fillFieldByPatterns(result, "links.website", links.website, [/website|web address|personal url/]);
+      }
+      await this._selectDropdownByPatterns([/type|website type|url type|link type/], this.profile?.defaultProfileLinkType || "LinkedIn");
+    }
+
+    _clearInput(el) {
+      if (!el || !el.value) return false;
+      try { el.focus(); } catch (_) {}
+      ns.FormFiller.setNativeValue(el, "");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      try { el.blur(); } catch (_) {}
+      return !el.value;
+    }
+
+    _clearEmptySocialLinks(result) {
+      const links = this.profile?.links || {};
+      const knownLinks = [links.linkedin, links.github, links.portfolio, links.website]
+        .filter(Boolean)
+        .map(value => this._normalizeText(value));
+      const socialFields = [
+        { key: "links.twitter", value: links.twitter, selectors: ['#socialNetworkAccounts--twitterAccount', '[name="twitterAccount"]'] },
+        { key: "links.facebook", value: links.facebook, selectors: ['#socialNetworkAccounts--facebookAccount', '[name="facebookAccount"]'] }
+      ];
+      for (const field of socialFields) {
+        const el = field.selectors.map(sel => document.querySelector(sel)).find(Boolean);
+        if (!el || !el.value) continue;
+        const current = this._normalizeText(el.value);
+        const profileValue = this._normalizeText(field.value || "");
+        if (profileValue && profileValue === current && !knownLinks.includes(current)) continue;
+        if (!knownLinks.includes(current)) continue;
+        if (this._clearInput(el)) {
+          result.unmapped = (result.unmapped || []).filter(item => item !== el);
+          result.skipped = (result.skipped || []).filter(item => item.el !== el);
+          result.skipped.push({ el, reason: `no-value:${field.key}` });
+        }
+      }
+    }
+
+    async _fillMyExperience(result) {
+      const pageText = this._normalizeText(document.body?.innerText || "");
+      const onMyExperience = /my experience|work experience|education|resume|websites|linkedin|skills/.test(pageText);
+      if (!onMyExperience) return;
+
+      const experiences = Array.isArray(this.profile?.experience) ? this.profile.experience.filter(Boolean) : [];
+      const education = Array.isArray(this.profile?.education) ? this.profile.education.filter(Boolean) : [];
+      const workPrefixes = experiences.length ? await this._ensureWorkEntries(experiences.length) : [];
+      for (let index = 0; index < experiences.length; index += 1) {
+        await this._fillExperienceEntry(result, experiences[index], index, workPrefixes[index] || null);
+      }
+
+      const prefixes = education.length ? await this._ensureEducationEntries(education.length) : [];
+      for (let index = 0; index < education.length; index += 1) {
+        await this._fillEducationEntry(result, education[index], index, prefixes[index] || null);
+      }
+
+      const hasLinkFields = this._findField([/linkedin|website|url|web address|profile link/], document, { includeFilled: true });
+      if (!hasLinkFields) await this._clickAddButton(["website", "link", "url", "social"]);
+      await this._fillLinks(result);
     }
   }
 

@@ -39,6 +39,7 @@
   font-weight: 600;
   color: #93c5fd;
 }
+.autoapply-drag-handle { cursor: move; padding-right: 48px; user-select: none; }
 .autoapply-toast .autoapply-row { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
 .autoapply-toast .autoapply-actions {
   display: flex;
@@ -58,6 +59,17 @@
 .autoapply-toast .autoapply-close {
   position: absolute; top: 6px; right: 8px;
   background: transparent; color: #9ca3af; padding: 2px 6px;
+}
+.autoapply-toast .autoapply-minimize {
+  position: absolute; top: 6px; right: 32px;
+  background: transparent; color: #9ca3af; padding: 2px 6px;
+}
+.autoapply-toast.autoapply-minimized {
+  min-width: 190px;
+  padding-bottom: 10px;
+}
+.autoapply-toast.autoapply-minimized > :not(.autoapply-close):not(.autoapply-minimize):not(.autoapply-drag-handle) {
+  display: none !important;
 }
 
 .autoapply-toast .autoapply-unmapped-list {
@@ -123,10 +135,14 @@
 /* Workday live status bar inside toast */
 .autoapply-wd-bar { margin: 8px 0 10px; }
 .wd-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wd-status-buttons { display: flex; gap: 6px; align-items: center; }
 .wd-badge { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 12px; }
 .wd-badge-info { background: #1d4ed8; color: #bfdbfe; }
 .wd-badge-ok   { background: #15803d; color: #bbf7d0; }
 .wd-badge-warn { background: #b45309; color: #fde68a; }
+.wd-auto-next-btn { font: 12px inherit; padding: 4px 8px; border-radius: 6px;
+                    background: #1f2937; color: #e5e7eb; border: 1px solid #4b5563; cursor: pointer; }
+.wd-auto-next-btn[data-enabled="true"] { background: #14532d; color: #bbf7d0; border-color: #22c55e; }
 .wd-pause-btn  { font: 12px inherit; padding: 4px 10px; border-radius: 6px;
                  background: #374151; color: #e5e7eb; border: 0; cursor: pointer; }
 .wd-pause-btn:hover { background: #4b5563; }

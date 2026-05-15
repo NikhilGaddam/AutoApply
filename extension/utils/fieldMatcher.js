@@ -17,6 +17,7 @@
 
     { key: "workAuthorization.requiresSponsorship", patterns: [/\b(visa[\s_-]*)?sponsorship\b/, /\brequire[\s_-]*sponsorship\b/] },
 
+    { key: "address.county",    patterns: [/\bcounty\b/] },
     { key: "address.line1",    patterns: [/\baddress[\s_-]*(line[\s_-]*1|1)?\b/, /\bstreet\b/] },
     { key: "address.city",     patterns: [/\bcity\b/, /\btown\b/] },
     { key: "address.state",    patterns: [/\bstate\b/, /\bprovince\b/, /\bregion\b/] },
@@ -26,15 +27,18 @@
     // Generic "what is your location?" dropdowns usually expect a country.
     { key: "address.country",  patterns: [/\bwhat is your location\b/, /^location$/, /\byour location\b/] },
 
-    { key: "links.linkedin",   patterns: [/\blinked[\s_-]*in\b/] },
     { key: "links.github",     patterns: [/\bgithub\b/, /\bgit[\s_-]*hub\b/] },
+    { key: "links.twitter",    patterns: [/\btwitter\b/, /\bx\.com\b/] },
+    { key: "links.facebook",   patterns: [/\bfacebook\b/] },
+    { key: "links.linkedin",   patterns: [/\blinked[\s_-]*in\b/] },
     { key: "links.portfolio",  patterns: [/\bportfolio\b/, /\bpersonal[\s_-]*site\b/] },
     { key: "links.website",    patterns: [/\bwebsite\b/, /\bother[\s_-]*website\b/, /\bpersonal[\s_-]*url\b/] },
-    { key: "links.twitter",    patterns: [/\btwitter\b/, /\bx\.com\b/] },
 
     { key: "currentCompany",   patterns: [/\bcurrent[\s_-]*(company|employer)\b/, /\bemployer\b/, /^company$/] },
     { key: "currentTitle",     patterns: [/\bcurrent[\s_-]*(title|position|role)\b/, /\bjob[\s_-]*title\b/] },
+    { key: "professionalSoftwareEngineeringExperience5Plus", patterns: [/\bat[\s_-]*least[\s_-]*5[\s_-]*years\b.*\bprofessional[\s_-]*software[\s_-]*engineering[\s_-]*experience\b/, /\b5\+?[\s_-]*years\b.*\bsoftware[\s_-]*engineering[\s_-]*experience\b/] },
     { key: "yearsOfExperience",patterns: [/\byears[\s_-]*of[\s_-]*experience\b/, /\bYOE\b/, /\bexperience[\s_-]*\(years\)/] },
+    { key: "applicationSource", patterns: [/\bhow[\s_-]*did[\s_-]*you[\s_-]*hear[\s_-]*about[\s_-]*(this[\s_-]*)?(job|role|position|opportunity)\b/, /\bhow[\s_-]*did[\s_-]*you[\s_-]*hear[\s_-]*about[\s_-]*us\b/, /\bsource\b/] },
     { key: "desiredSalary",    patterns: [/\bsalary\b/, /\bcompensation[\s_-]*expectation/, /\bexpected[\s_-]*(pay|salary|compensation)\b/] },
     { key: "noticePeriod",     patterns: [/\bnotice[\s_-]*period\b/, /\bavailability[\s_-]*to[\s_-]*start\b/] },
 

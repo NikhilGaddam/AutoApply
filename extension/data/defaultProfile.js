@@ -16,6 +16,7 @@
     phoneExtension: "",
 
     defaultProfileLinkType: "LinkedIn",
+    applicationSource: "",
 
     // Shared account credentials reused for Workday / Greenhouse / etc. when
     // they require sign-in or account creation before showing the form.
@@ -36,6 +37,7 @@
       line1: "2110 Paul Edwin Ter",
       line2: "Apt 104",
       city: "Falls Church",
+      county: "Fairfax",
       state: "Virginia",
       stateCode: "VA",
       postalCode: "22043",
@@ -65,12 +67,14 @@
       github: "https://github.com/nikhilgaddam",
       portfolio: "",
       website: "",
+      facebook: "",
       twitter: ""
     },
 
     currentCompany: "Strategy (formerly MicroStrategy)",
     currentTitle: "Software Engineer 2 - Infrastructure",
     yearsOfExperience: "4",
+    professionalSoftwareEngineeringExperience5Plus: "Yes",
     desiredSalary: "",
     noticePeriod: "2 weeks",
 
@@ -107,7 +111,7 @@
         startDate: "2025-01",
         endDate: "",
         current: true,
-        description: "Designed a distributed multi-cloud orchestration platform on AWS, GCP, Azure managing 1000+ clusters."
+        description: "Designed a distributed multi-cloud orchestration platform on hyperscalers AWS, GCP, Azure, and an emerging AI-focused cloud to provision and manage 1000+ clusters, engineering zero-downtime infrastructure upgrades and extending the platform to support GPU-accelerated workloads via NVIDIA DGX Cloud integration for AI/ML model training. Built the instance-to-Kubernetes container migration engine using composite Halyard workflows that auto-provision tenant networks, clusters, and environments from backups with auto-computed cluster sizing from source instance specs and secondary VPC CIDR injection into existing customer networks, cutting migration time from 6 hours to 2 hours. Reduced cloud spend by $10 million annually by implementing adaptive autoscaling for GPU and CPU-intensive services, optimizing capacity for AI/ML training workloads and improving cost efficiency by 25%. Developed an AIOps Bot that ingests container logs and metrics to support finance and ML engineering teams with anomaly detection, alerting, and reports for AI model deployment infrastructure and $40B+ in digital assets."
       },
       {
         company: "Sprinklr",
@@ -116,15 +120,39 @@
         startDate: "2021-07",
         endDate: "2023-08",
         current: false,
-        description: "Built backend for Conversational AI platform; optimized no-code workflows for Uber and Microsoft."
+        description: "Developed core backend components for Sprinklr's Conversational AI platform, leveraging large language models and unsupervised learning to automate intent discovery and improve natural language understanding. Optimized the no-code business process automation platform, improving workflow execution efficiency and cutting first-response times by 33% for Uber and Microsoft across high-volume customer operations. Built a series of REST APIs totaling 4 distinct interfaces for the Guided Workflows product; these enhancements are being utilized by over 15 teams, fostering collaboration and operational efficiency."
       }
+    ],
+
+    projects: [
+      {
+        name: "Archon",
+        description: "Open-source contributor to a modular agentic operating system; refactored the tool-execution pipeline."
+      },
+      {
+        name: "Agent Browser for AI Agents",
+        description: "Contributed to a headless browser automation CLI for AI agents."
+      }
+    ],
+
+    research: [
+      {
+        title: "Identifying Parking Demand Hotspots in Seattle",
+        venue: "Urban Transitions 2024"
+      }
+    ],
+
+    achievements: [
+      "JEE AIR 122, top 0.08% among 1.18M candidates"
     ],
 
     skills: [
       "Python", "Go", "C++", "Java", "TypeScript", "JavaScript", "Bash", "SQL",
       "Kubernetes", "Docker", "Terraform", "Helm", "Spring Boot", "gRPC", "GraphQL",
-      "Elasticsearch", "Kafka", "Redis", "PostgreSQL", "LangChain", "AWS", "GCP", "Azure"
+      "Elasticsearch", "Kafka", "Redis", "PostgreSQL", "LangChain", "AWS", "GCP", "Azure", "CKAD"
     ],
+
+    resumeSummary: "Nikhil Gaddam is a Software Engineer 2 - Infrastructure at Strategy (formerly MicroStrategy), with experience designing multi-cloud orchestration on AWS, GCP, and Azure for 1000+ clusters, Kubernetes migration automation, adaptive autoscaling, AIOps anomaly detection, RAG/LangChain search systems, predictive SQL caching, and Conversational AI backend systems. Education includes a Master's in Computer Science from Virginia Tech and a Bachelor of Technology in Computer Engineering from IIT Guwahati.",
 
     // Path inside the extension package, resolved via chrome.runtime.getURL().
     // The DataTransfer trick lets us assign this to <input type="file">.

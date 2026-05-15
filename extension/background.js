@@ -243,11 +243,14 @@ async function runClaudeSdkAgentTask(payload) {
 
   const agentTask = {
     agent: "AutoApply Claude SDK Agent",
-    objective: "Fill required missing job application fields and any remaining Education Details fields, then return control to the human.",
+    objective: "Scan the whole application page and fill every safe, answerable remaining field, then return control to the human.",
     instructions: [
+      "Read the full page context and all fieldsToFill before deciding actions.",
       "Use only the provided profile JSON, resume/details text, and page context.",
-      "Create field-fill actions only for fields you can answer confidently from the supplied data.",
-      "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date should be filled from profile.education when present.",
+      "When options are provided for a dropdown, choose one exact option from that list.",
+      "For 'How did you hear about this job?' source fields, prefer recruiter, talent acquisition, sourcer, reached out, or contacted options; avoid LinkedIn, job board, or job site options when a recruiter-style option exists.",
+      "Create field-fill actions for every field you can answer confidently from the supplied data, including optional profile, location, education, employment, work authorization, and screening fields.",
+      "Education Details fields such as School, Degree, Discipline, field of study, major, and graduation date must be filled from profile.education when present.",
       "For yes/no fields, answer with Yes or No.",
       "Do not submit the application.",
       "Return strict JSON only."
@@ -297,6 +300,70 @@ async function runClaudeSdkAgentTask(payload) {
   return { actions, handoff: parsed.handoff || "Hand over to Human", logs };
 }
 
+async function runClaudeSdkReviewTask(payload) {
+  const logs = [];
+  const stored = await new Promise((resolve, reject) => {
+    chrome.storage.sync.get(FOUNDRY_KEY, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result || {});
+    });
+  });
+  const cfg = normalizeFoundryConfig(stored?.[FOUNDRY_KEY] || {});
+  const missing = missingFoundrySettings(cfg);
+  if (missing.length) {
+    throw new Error(`Foundry settings are missing in the extension popup: ${missing.join(", ")}.`);
+  }
+
+  const model = cfg.model;
+  logs.push(`Using Claude page-review contract with model ${model}.`);
+  const reviewTask = {
+    agent: "AutoApply Final Page Reviewer",
+    objective: "Review the visible application page after autofill and return concise comments before handing control to the human.",
+    instructions: [
+      "Review visible fields, values, validation errors, and required missing fields.",
+      "Do not invent hidden page state. Base comments only on the supplied snapshot.",
+      "If required fields or obvious wrong values remain, list them clearly.",
+      "If the page looks ready for human review/Next, say the data on the page looks good and mention any remaining manual review items.",
+      "Do not submit the application.",
+      "Return strict JSON only."
+    ],
+    outputSchema: {
+      status: "looks_good | needs_review",
+      comments: ["short human-readable comment"],
+      handoff: "Hand over to Human"
+    },
+    profile: payload.profile || {},
+    page: payload.page || {},
+    fields: payload.fields || [],
+    missing: payload.missing || [],
+    errors: payload.errors || []
+  };
+
+  const body = {
+    model,
+    max_tokens: 700,
+    temperature: 0,
+    messages: [{ role: "user", content: `You are AutoApply Final Page Reviewer. Return only JSON.\n\n${JSON.stringify(reviewTask, null, 2)}` }]
+  };
+
+  let json;
+  try {
+    json = await fetchClaudeMessages(foundryRequestUrls(cfg.resource, cfg.baseUrl), cfg, body, logs);
+  } catch (e) {
+    e.logs = logs;
+    throw e;
+  }
+  const text = json.content?.map?.(part => part.text || "").join("\n") ||
+               json.choices?.[0]?.message?.content ||
+               json.output_text ||
+               json.text || "";
+  const parsed = parseClaudeAgentJson(text) || json;
+  const comments = Array.isArray(parsed.comments) ? parsed.comments :
+                   (parsed.comment ? [parsed.comment] : []);
+  logs.push(`Claude page review returned ${comments.length} comment${comments.length === 1 ? "" : "s"}.`);
+  return { status: parsed.status || "needs_review", comments, handoff: parsed.handoff || "Hand over to Human", logs };
+}
+
 // Fill an input in the page's MAIN world (bypasses isolated-world React
 // tracker issues). Content scripts send this message when the normal
 // isolated-world fill doesn't notify React's own-property tracker.
@@ -312,6 +379,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       safeSend({ ok: false, error: "AI handoff timed out." });
     }, 45000);
     runClaudeSdkAgentTask(msg.payload || {})
+      .then(result => { clearTimeout(timeout); safeSend({ ok: true, ...result }); })
+      .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e), logs: e.logs || [] }); });
+    return true;
+  }
+
+  if (msg.type === "claudeAgent.reviewPage") {
+    let responded = false;
+    const safeSend = (response) => {
+      if (responded) return;
+      responded = true;
+      try { sendResponse(response); } catch (_) {}
+    };
+    const timeout = setTimeout(() => {
+      safeSend({ ok: false, error: "AI page review timed out." });
+    }, 45000);
+    runClaudeSdkReviewTask(msg.payload || {})
       .then(result => { clearTimeout(timeout); safeSend({ ok: true, ...result }); })
       .catch(e => { clearTimeout(timeout); safeSend({ ok: false, error: e.message || String(e), logs: e.logs || [] }); });
     return true;
@@ -340,7 +423,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.scripting.executeScript({
       target,
       world: "MAIN",
-      func: (inputId, targets, displayValue) => {
+      func: async (inputId, targets, displayValue) => {
         function getSelectInstance(el) {
           const container = el?.closest('.select__container') || el?.closest('.select');
           if (!container) return null;
@@ -362,27 +445,94 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!el) return false;
         const inst = getSelectInstance(el);
         if (!inst) return false;
-        const options = inst.props?.options || [];
-        for (const target of targets) {
-          let opt = options.find(o => (o.label || '').toLowerCase().trim() === target);
-          if (!opt && target.length >= 3) {
-            opt = options.find(o => {
-              const l = (o.label || '').toLowerCase().trim();
-              return l && (l.includes(target) || target.includes(l));
+        async function loadOptions(query) {
+          if (typeof inst.props?.loadOptions !== 'function' || !query) return [];
+          try {
+            const loaded = await inst.props.loadOptions(query, () => {});
+            if (Array.isArray(loaded)) return loaded;
+            if (Array.isArray(loaded?.options)) return loaded.options;
+          } catch (_) {}
+          return [];
+        }
+        function normalizeText(value) {
+          return String(value || '')
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[’']/g, '')
+            .replace(/&/g, ' and ')
+            .replace(/[^a-z0-9]+/gi, ' ')
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, ' ');
+        }
+        const normalizedTargets = Array.from(new Set([...(targets || []), displayValue].map(normalizeText).filter(Boolean)));
+        function matchesOption(option, target) {
+          const label = normalizeText(option?.label || '');
+          const value = normalizeText(option?.value ?? '');
+          const normalizedTarget = normalizeText(target);
+          return label === normalizedTarget || value === normalizedTarget || (normalizedTarget.length >= 3 && label && (label.includes(normalizedTarget) || normalizedTarget.includes(label)));
+        }
+        function chooseOption(options) {
+          for (const target of normalizedTargets) {
+            const opt = options.find(option => matchesOption(option, target));
+            if (opt) return opt;
+          }
+          return null;
+        }
+        function searchQueries() {
+          const queries = [];
+          const add = value => {
+            const raw = String(value || '').trim();
+            const normalized = normalizeText(raw);
+            for (const query of [raw, normalized]) {
+              if (query && !queries.includes(query)) queries.push(query);
+            }
+          };
+          [...(targets || []), displayValue].forEach(add);
+          for (const target of normalizedTargets) {
+            const words = target.split(' ').filter(Boolean);
+            words.forEach(add);
+            for (let index = 1; index <= Math.min(target.length, 12); index += 1) add(target.slice(0, index));
+            words.forEach(word => {
+              for (let index = 1; index <= Math.min(word.length, 8); index += 1) add(word.slice(0, index));
             });
           }
-          if (opt && typeof inst.selectOption === 'function') { inst.selectOption(opt); return true; }
-          if (opt && typeof inst.props?.onChange === 'function') {
-            inst.props.onChange(opt, { action: 'select-option', option: opt });
-            try { inst.props.onMenuClose?.(); } catch (_) {}
-            return true;
-          }
+          return queries;
         }
+        function applyOption(opt) {
+          if (!opt) return false;
+          let applied = false;
+          try { inst.props?.onMenuOpen?.(); } catch (_) {}
+          try { inst.props?.onInputChange?.(opt.label || displayValue || '', { action: 'input-change' }); } catch (_) {}
+          if (typeof inst.selectOption === 'function') {
+            try { inst.selectOption(opt); applied = true; } catch (_) {}
+          }
+          if (typeof inst.props?.onChange === 'function') {
+            try { inst.props.onChange(opt, { action: 'select-option', option: opt, name: inst.props?.name }); applied = true; } catch (_) {}
+          }
+          if (typeof inst.setValue === 'function') {
+            try { inst.setValue(opt, 'select-option', opt); applied = true; } catch (_) {}
+          }
+          if (!applied) return false;
+          try { inst.props?.onInputChange?.('', { action: 'set-value' }); } catch (_) {}
+          try { inst.props?.onMenuClose?.(); } catch (_) {}
+          try { inst.forceUpdate?.(); } catch (_) {}
+          return true;
+        }
+
+        const initialOptions = inst.props?.options || [];
+        const initialChoice = chooseOption(initialOptions);
+        if (applyOption(initialChoice)) return true;
+
+        for (const query of searchQueries()) {
+          const options = await loadOptions(query);
+          const opt = chooseOption(options);
+          if (applyOption(opt)) return true;
+        }
+
         if (typeof inst.props?.onChange === 'function' && displayValue) {
           const option = { label: displayValue, value: displayValue };
-          inst.props.onChange(option, { action: 'select-option', option });
-          try { inst.props.onMenuClose?.(); } catch (_) {}
-          return true;
+          return applyOption(option);
         }
         return false;
       },
