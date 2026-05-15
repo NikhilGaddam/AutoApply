@@ -66,9 +66,44 @@
   }
 
   function describe(el) {
-    const lbl = ns.FieldMatcher.collectLabelText(el);
+    const lbl = fieldLabel(el) || ns.FieldMatcher.collectLabelText(el);
     if (lbl) return lbl.slice(0, 80);
     return (el.name || el.id || el.tagName).toString().toLowerCase();
+  }
+
+  function cleanText(node) {
+    if (!node) return "";
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll("input, select, textarea, button, svg, ul, ol, option").forEach(n => n.remove());
+    return (clone.innerText || clone.textContent || "").replace(/[*✱]/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function fieldLabel(el) {
+    if (!el) return "";
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const text = cleanText(lbl);
+      if (text) return text;
+    }
+    const labelledBy = el.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      const text = labelledBy.split(/\s+/).map(id => cleanText(document.getElementById(id))).filter(Boolean).join(" ");
+      if (text) return text;
+    }
+    const wrapper = el.closest?.(".application-question, .form-group, .field, fieldset, .select, .select__container");
+    const wrapperLabel = wrapper?.querySelector?.(":scope > label, :scope > legend, :scope > .label, :scope > .select__label, :scope > .application-label");
+    const text = cleanText(wrapperLabel);
+    if (text) return text;
+    return (el.getAttribute?.("placeholder") || el.name || el.id || "").replace(/\s+/g, " ").trim();
+  }
+
+  function hasValue(el) {
+    if (!el) return false;
+    if ((el.type || "").toLowerCase() === "file") return !!el.files?.length;
+    const selectRoot = el.closest?.(".select__container, .select");
+    const selected = selectRoot?.querySelector?.("[class*='single-value']")?.textContent?.trim();
+    if (selected && !/^select\.\.\.$/i.test(selected)) return true;
+    return !!String(el.value || "").trim();
   }
 
   function requiredText(el) {
@@ -99,13 +134,14 @@
 
     const missing = [];
     const seen = new Set();
-    const addMissing = (el, suffix = "") => {
-      if (!isRequiredField(el)) return;
-      const name = `${describe(el)}${suffix}`;
+    const addMissing = (el) => {
+      if (!isRequiredField(el) || hasValue(el)) return;
+      const name = describe(el);
+      if (!name) return;
       if (!seen.has(name)) { seen.add(name); missing.push({ el, name }); }
     };
     unmapped.forEach(el => addMissing(el));
-    skipped.forEach(item => addMissing(item.el, item.reason?.startsWith("no-value:") ? " (no profile value)" : ""));
+    skipped.forEach(item => addMissing(item.el));
 
     const kind = getSubmitKind();
     const primaryLabel = kind === "next"

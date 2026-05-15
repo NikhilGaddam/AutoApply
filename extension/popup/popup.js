@@ -124,8 +124,8 @@ function humanStatus(s) {
     try {
       const res = await chrome.tabs.sendMessage(tab.id, { type: "autoapply.fill" });
       if (res?.ok) {
-        msgEl.textContent = `Filled ${res.filled} · ${res.unmapped} need review (${res.site})`;
         const missingFields = res.missingFields || [];
+        msgEl.textContent = `Filled ${res.filled} · ${missingFields.length} required missing (${res.site})`;
         if (missingFields.length) {
           for (const name of missingFields) {
             const li = document.createElement("li");
